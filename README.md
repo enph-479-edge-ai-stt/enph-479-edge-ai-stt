@@ -31,8 +31,21 @@ on board (KV260)
 ## Getting the code
 
 ```
-git clone https://github.com/AndrewD0/enph-479-edge-ai-stt.git
+git clone https://github.com/enph-479-edge-ai-stt/enph-479-edge-ai-stt.git
 ```
+
+## Development
+
+Each vertical is its own `uv` project (own `pyproject.toml`, lockfile, and Python version) — they run on different machines. Work inside the one you're touching:
+
+```
+cd training            # the offline pipeline (Python pinned to 3.12.0)
+uv sync                # create the venv and install dev tooling
+uv run ruff check .    # lint
+uv run pytest          # tests
+```
+
+Lint and tests must pass before opening a PR; CI enforces both. See `AGENTS.md` for the full workflow.
 
 ## Reference
 
