@@ -1,5 +1,7 @@
 # enph-479-edge-ai-stt
 
+[![CI](https://github.com/enph-479-edge-ai-stt/enph-479-edge-ai-stt/actions/workflows/ci.yml/badge.svg)](https://github.com/enph-479-edge-ai-stt/enph-479-edge-ai-stt/actions/workflows/ci.yml)
+
 ENPH 479 capstone (UBC Engineering Physics, 2026W). An FPGA speech-recognition system reproducing "FPGA-Based Low-Power Speech Recognition with Recurrent Neural Networks" (Lee et al., arXiv:1610.00552): a deep LSTM acoustic model trained with CTC, a character-level LSTM language model, and a trigram word language model, fused by an N-best beam search, running quantized RNN inference on a Kria KV260.
 
 Team: Kai Asaoka, Sudharshan Kannan, Andrew Du.
