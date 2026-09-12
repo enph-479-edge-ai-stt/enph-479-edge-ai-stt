@@ -20,6 +20,6 @@ module sigmoid_lut #(
     end
 
     always @(*) begin
-        sigmoid_output = lut[index]
+        sigmoid_output = lut[index];
     end
 endmodule
