@@ -1,0 +1,38 @@
+name: CI
+
+# Per-vertical jobs. Each vertical is an independent uv project, so its job runs
+# in that vertical's directory and only fires when that vertical (or this file)
+# changes. Add a new job per vertical as it grows Python code.
+on:
+  pull_request:
+    branches: [main]
+    paths: ["training/**", ".github/workflows/ci.yml"]
+  push:
+    branches: [main]
+    paths: ["training/**", ".github/workflows/ci.yml"]
+
+jobs:
+  training:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: training
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "training/uv.lock"
+
+      # No OneDrive on CI, so the default in-repo .venv is fine here.
+      # Python 3.12.0 is pinned by training/.python-version and fetched by uv if missing.
+      - name: Sync (installs the dev group: ruff, pytest)
+        run: uv sync --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest
