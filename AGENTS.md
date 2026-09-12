@@ -93,6 +93,7 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 - **Always create worktrees from `main`.** Never from another feature branch, and never from whatever branch happens to be checked out. Fetch first so `main` is current:
   `git fetch origin && git worktree add ../stt-<name> -b feat/<name> origin/main`
 - `main` is the integration branch. Rebase or merge `main` in before opening a PR.
+- Before opening a PR, lint and tests must pass in the affected vertical (e.g. `cd training`): `uv run ruff check .` and `uv run pytest` (with `UV_PROJECT_ENVIRONMENT` set — see Environments). CI (`.github/workflows/ci.yml`) runs them per vertical on every PR to `main` and on pushes to `main`.
 - Branch names: `feat/<thing>`, `fix/<thing>`. One vertical per branch where possible.
 - Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification): `<type>(<scope>): <description>`, imperative, lowercase, no trailing period. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. Scope is the vertical or shared area it touches: `training`, `fpga`, `runtime`, `shared`; omit it for repo-wide changes. Anything that changes a contract in `shared/` is a breaking change: add `!` after the scope and a `BREAKING CHANGE:` footer saying which artifacts it invalidates.
 - Never commit data, checkpoints, ARPA files, bitstreams, or venvs. `.gitignore` covers them; if you add a new artifact type, add it there.
@@ -101,14 +102,15 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 
 ## Environments
 
-- Each vertical keeps its own environment. Nothing builds all three at once.
-- Local Python is 3.12 with `uv` available. There is no `pyproject.toml` yet; the notebooks use `sys.path` for now. Add packaging when a second module needs it.
-- Venvs must live outside OneDrive (OneDrive evicts package files and corrupts in-folder venvs). This repo is inside OneDrive.
-- Colab: `!git clone` (public, no auth), skip the submodule, `pip install -e .` once packaging exists.
+- Each vertical is its own **independent uv project** — its own `pyproject.toml`, `.python-version`, `uv.lock`, and venv — because the verticals run on different machines, hardware, and even Python versions. This is deliberately *not* a uv workspace (a workspace shares one lockfile / venv / Python version across members, which is the opposite of what we want). Nothing builds all three at once.
+- `training/` is the only Python project today: src layout (package under `training/src/training/`, `import training.data...`), pinned to Python 3.12.0, hatchling backend, with ruff + pytest config and a `dev` dependency group (ruff, pytest) in `training/pyproject.toml`. `runtime/` gets the same treatment when its first module lands; `hardware/` is Verilog, no Python. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is intentionally kept out of `dependencies` until each stage lands, so `uv sync` stays fast.
+- Venvs must live outside OneDrive (OneDrive evicts package files and corrupts in-folder venvs). This repo is inside OneDrive, so before running any uv command point uv at an external venv by setting `UV_PROJECT_ENVIRONMENT` to an absolute path outside OneDrive (one per vertical) — uv's default in-folder `./.venv` must not be used. Building from the OneDrive-hosted source is fine; only the installed venv needs to sit elsewhere.
+- Dev loop (run inside the vertical, e.g. `cd training`, with `UV_PROJECT_ENVIRONMENT` set): `uv sync` creates/updates the venv and installs the `dev` group; `uv run ruff check .` lints (notebooks included), `uv run ruff format` formats, `uv run pytest` runs that vertical's `tests/`. Commit each vertical's `uv.lock`.
+- Colab: `!git clone` (public, no auth), skip the submodule, then `pip install -e ./training` (editable install of the training package).
 
 ## Current state (2026-09-12)
 
-- `training/data/librispeech.py` and the download notebook exist (resumable, md5-verified). No feature code yet.
+- `training/src/training/data/librispeech.py` and the download notebook exist (resumable, md5-verified), plus `training/tests/` (librispeech + notebook regression tests). No feature code yet.
 - `fpga/` submodule has the PE / buffer / weight BRAM / LUT modules; array, EPU, FSM, top, and testbenches are stubs.
 - `runtime/` and `shared/` are READMEs only.
 - Open decisions: hand-RTL vs FINN-GL as the primary bitstream path; weight loading mechanism; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.
