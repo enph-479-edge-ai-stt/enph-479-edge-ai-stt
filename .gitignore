@@ -1,0 +1,45 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# virtual environments
+.venv/
+venv/
+env/
+
+# --- ML data & artifacts (kept on Drive / built locally, not git) ---
+# anchored to repo root so it does not match the training/data/ source package
+/data/
+/datasets/
+*.npy
+*.tar
+*.wav
+*.flac
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.onnx
+wandb/
+
+# language models
+*.arpa
+*.arpa.gz
+*.klm
+
+# --- FPGA build junk (the submodule also has its own .gitignore) ---
+*.bit
+*.xsa
+*.jou
+*.log
+.Xil/
+
+# --- Frontend ---
+node_modules/
+dist/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
