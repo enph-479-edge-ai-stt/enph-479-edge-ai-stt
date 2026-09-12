@@ -28,7 +28,7 @@ jobs:
 
       # No OneDrive on CI, so the default in-repo .venv is fine here.
       # Python 3.12.0 is pinned by training/.python-version and fetched by uv if missing.
-      - name: Sync (installs the dev group: ruff, pytest)
+      - name: Sync (installs the dev group of ruff and pytest)
         run: uv sync --frozen
 
       - name: Ruff lint
