@@ -1,0 +1,56 @@
+[project]
+name = "stt-training"
+version = "0.1.0"
+description = "ENPH 479 STT — offline training pipeline: CTC-LSTM acoustic model, char-LM, KenLM word-LM, exported to QONNX for a Kria KV260."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Kai Asaoka" },
+    { name = "Sudharshan Kannan" },
+    { name = "Andrew Du" },
+]
+dependencies = []
+
+[dependency-groups]
+# Dev tooling only. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is
+# added to `dependencies` as each training stage lands — kept out for now so
+# `uv sync` stays fast and does not try to build heavy/Windows-hostile wheels.
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src layout: the importable package is training/src/training/ -> `training`.
+packages = ["src/training"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["training"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra"
+# src layout: put src/ on sys.path so `import training` resolves even without
+# an editable install (belt-and-suspenders alongside `uv sync`).
+pythonpath = ["src"]
