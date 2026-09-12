@@ -6,15 +6,17 @@ Reproduces Lee et al., "FPGA-Based Low-Power Speech Recognition with Recurrent N
 
 ## Three verticals
 
-The repo is split by the three things that get built, each with its own toolchain and its own machine. The verticals share source and contracts, not a build environment.
+The repo is split by the three things that get built, each with its own toolchain and its own machine. The verticals share contracts (through `shared/`), not code and not a build environment.
 
 | Vertical | Folder | Runs on | Produces |
 |---|---|---|---|
 | 1. Training data + ML | `training/` | Google Colab (GPU) / any PC | QONNX file + frozen quantized weights |
-| 2. Hardware + flashing to FPGA | `fpga/` | Local Linux box with Vivado / Vitis HLS | Bitstream (`.bit` + `.hwh`) |
+| 2. Hardware + flashing to FPGA | `hardware/` | Local Linux box with Vivado / Vitis HLS | Bitstream (`.bit` + `.hwh`) |
 | 3. Runtime on the SoM Linux | `runtime/` | KV260 ARM cores, Ubuntu + PYNQ | The live mic-to-browser demo |
 
 `shared/` holds the cross-vertical contracts (feature spec, vocab, quant scheme, golden vectors). Nothing in `shared/` belongs to one vertical.
+
+**Hard invariant — no cross-vertical imports.** `training/`, `hardware/`, and `runtime/` must never import from, or otherwise depend on, one another. Anything two verticals both need lives in `shared/`, and in `shared/` only: the verticals depend on `shared/`, never on each other. They run on different machines and Python versions, so a cross-vertical import would not even resolve — this is why, for example, the runtime re-implements the training feature pipeline in numpy and verifies it against `shared/golden/` rather than importing `training`.
 
 ```
 offline (PC + GPU)
@@ -33,20 +35,18 @@ Python package. Notebooks in `training/notebooks/` are thin launchers only; real
 Stages, in order: `data` (LibriSpeech download, transcript cleanup, 31-symbol vocab) -> `features` (123-dim, cached) -> `am` (LSTM + CTC) -> `charlm` -> `wordlm` (KenLM, no training) -> `decode` (beam search prototype, WER via jiwer) -> `qat` (Brevitas QuantLSTM) -> `export` (QONNX + bit-true check).
 
 - Data: LibriSpeech from OpenSLR 12, LM text and prebuilt ARPAs from OpenSLR 11. Train on `train-clean-100` first, `dev-clean` for tuning, `test-clean` touched once.
-- Colab rules: code in GitHub, artifacts on Drive, shards copied to `/content` scratch before training, resume-from-checkpoint is the default path, pin versions. Clone without the submodule on Colab.
+- Colab rules: code in GitHub, artifacts on Drive, shards copied to `/content` scratch before training, resume-from-checkpoint is the default path, pin versions.
 - Stack: PyTorch, torchaudio transforms (TorchCodec for file I/O), Brevitas, qonnx, KenLM, jiwer, pyctcdecode as the reference decoder only.
 - The feature pipeline here is the reference the runtime numpy code must bit-match.
 
-### 2. `fpga/` (hardware design + build + flash)
+### 2. `hardware/` (hardware design + build + flash)
 
 Turns the trained model into a bitstream and gets it onto the board.
 
-- RTL lives in the git submodule `fpga/enph-479-stt-neural-network/` (Andrew's repo, `AndrewD0/enph-479-stt-neural-network`). Hand-written Verilog modelled on the paper's LSTM tile: `pe_unit` (8b x 6b MAC, 24b accumulator), `pe_array`, `pe_buffer` (i/f/o/c gate results), `lstm_epu`, `weight_bram` (packed rows, 6b weights), `sigmoid_lut` / `tanh_lut`, `fsm_controller`, `output_tile`, `sr_accelerator_top`. Several files are still empty stubs. Testbenches in `hardware/testbenches/`.
-- The original plan was FINN-GL (Brevitas -> QONNX Scan -> FINN-GLSTM-Hw HLS templates -> Vitis HLS -> Vivado). The submodule is a hand-RTL path instead. Both are legitimate; which one is primary is an open team decision. Either way the bitstream must match the QONNX CPU execution bit-for-bit (gate V3 below).
+- RTL lives in-repo under `hardware/rtl/`. Hand-written Verilog modelled on the paper's LSTM tile: `pe_unit` (8b x 6b MAC, 24b accumulator), `pe_array`, `pe_buffer` (i/f/o/c gate results), `lstm_epu`, `weight_bram` (packed rows, 6b weights), `sigmoid_lut` / `tanh_lut`, `fsm_controller`, `output_tile`, `sr_accelerator_top`. Several files are still empty stubs. Testbenches in `hardware/testbenches/`.
+- The original plan was FINN-GL (Brevitas -> QONNX Scan -> FINN-GLSTM-Hw HLS templates -> Vitis HLS -> Vivado). The `hardware/` RTL is a hand-RTL path instead. Both are legitimate; which one is primary is an open team decision. Either way the bitstream must match the QONNX CPU execution bit-for-bit (gate V3 below).
 - Build machine: Vivado + Vitis HLS on Linux, ~32 GB RAM, 100+ GB disk. Never on Colab, never on the board. Build outputs (`.bit`, `.xsa`, `.jou`, `.log`, `.Xil/`) are gitignored.
 - Weight loading: either baked into the bitstream as BRAM init, or written over AXI at boot. AXI boot-write is preferred for iteration speed (swap weights without a rebuild). Undecided.
-- Submodule workflow: `git submodule update --init --recursive` after clone. To pull new hardware work: `git -C fpga/enph-479-stt-neural-network pull`, then commit the pointer bump here.
-
 ### 3. `runtime/` (SoM Linux program)
 
 The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Planned modules (create folders as each starts): `capture/` (ALSA + sounddevice ring buffer), `features_np/` (numpy port of the training features, must bit-match `shared/golden/`), `pynq_driver/` (Overlay / allocate / DMA / MMIO wrapper), `decoder/` (beam search + kenlm, Python prototype then C port), `frontend/` (websocket + browser dashboard), `bare_metal/` (stretch, no-OS C variant for the power delta).
@@ -95,9 +95,8 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 - `main` is the integration branch. Rebase or merge `main` in before opening a PR.
 - Before opening a PR, lint and tests must pass in the affected vertical (e.g. `cd training`): `uv run ruff check .` and `uv run pytest` (with `UV_PROJECT_ENVIRONMENT` set — see Environments). CI (`.github/workflows/ci.yml`) runs them per vertical on every PR to `main` and on pushes to `main`.
 - Branch names: `feat/<thing>`, `fix/<thing>`. One vertical per branch where possible.
-- Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification): `<type>(<scope>): <description>`, imperative, lowercase, no trailing period. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. Scope is the vertical or shared area it touches: `training`, `fpga`, `runtime`, `shared`; omit it for repo-wide changes. Anything that changes a contract in `shared/` is a breaking change: add `!` after the scope and a `BREAKING CHANGE:` footer saying which artifacts it invalidates.
+- Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification): `<type>(<scope>): <description>`, imperative, lowercase, no trailing period. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. Scope is the vertical or shared area it touches: `training`, `hardware`, `runtime`, `shared`; omit it for repo-wide changes. Anything that changes a contract in `shared/` is a breaking change: add `!` after the scope and a `BREAKING CHANGE:` footer saying which artifacts it invalidates.
 - Never commit data, checkpoints, ARPA files, bitstreams, or venvs. `.gitignore` covers them; if you add a new artifact type, add it there.
-- Submodule pointer bumps are their own commit (`chore(fpga): bump hw submodule`).
 - Do not commit or push unless asked.
 
 ## Environments
@@ -106,11 +105,11 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 - `training/` is the only Python project today: src layout (package under `training/src/training/`, `import training.data...`), pinned to Python 3.12.0, hatchling backend, with ruff + pytest config and a `dev` dependency group (ruff, pytest) in `training/pyproject.toml`. `runtime/` gets the same treatment when its first module lands; `hardware/` is Verilog, no Python. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is intentionally kept out of `dependencies` until each stage lands, so `uv sync` stays fast.
 - Venvs must live outside OneDrive (OneDrive evicts package files and corrupts in-folder venvs). This repo is inside OneDrive, so before running any uv command point uv at an external venv by setting `UV_PROJECT_ENVIRONMENT` to an absolute path outside OneDrive (one per vertical) — uv's default in-folder `./.venv` must not be used. Building from the OneDrive-hosted source is fine; only the installed venv needs to sit elsewhere.
 - Dev loop (run inside the vertical, e.g. `cd training`, with `UV_PROJECT_ENVIRONMENT` set): `uv sync` creates/updates the venv and installs the `dev` group; `uv run ruff check .` lints (notebooks included), `uv run ruff format` formats, `uv run pytest` runs that vertical's `tests/`. Commit each vertical's `uv.lock`.
-- Colab: `!git clone` (public, no auth), skip the submodule, then `pip install -e ./training` (editable install of the training package).
+- Colab: `!git clone` (public, no auth), then `pip install -e ./training` (editable install of the training package).
 
 ## Current state (2026-09-12)
 
 - `training/src/training/data/librispeech.py` and the download notebook exist (resumable, md5-verified), plus `training/tests/` (librispeech + notebook regression tests). No feature code yet.
-- `fpga/` submodule has the PE / buffer / weight BRAM / LUT modules; array, EPU, FSM, top, and testbenches are stubs.
+- `hardware/` has the PE / buffer / weight BRAM / LUT modules; array, EPU, FSM, top, and testbenches are stubs.
 - `runtime/` and `shared/` are READMEs only.
 - Open decisions: hand-RTL vs FINN-GL as the primary bitstream path; weight loading mechanism; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.
