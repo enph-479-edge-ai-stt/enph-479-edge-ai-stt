@@ -105,11 +105,11 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 - `training/` is the only Python project today: src layout (package under `training/src/training/`, `import training.data...`), pinned to Python 3.12.0, hatchling backend, with ruff + pytest config and a `dev` dependency group (ruff, pytest) in `training/pyproject.toml`. `runtime/` gets the same treatment when its first module lands; `hardware/` is Verilog, no Python. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is intentionally kept out of `dependencies` until each stage lands, so `uv sync` stays fast.
 - Venvs must live outside OneDrive (OneDrive evicts package files and corrupts in-folder venvs). This repo is inside OneDrive, so before running any uv command point uv at an external venv by setting `UV_PROJECT_ENVIRONMENT` to an absolute path outside OneDrive (one per vertical) — uv's default in-folder `./.venv` must not be used. Building from the OneDrive-hosted source is fine; only the installed venv needs to sit elsewhere.
 - Dev loop (run inside the vertical, e.g. `cd training`, with `UV_PROJECT_ENVIRONMENT` set): `uv sync` creates/updates the venv and installs the `dev` group; `uv run ruff check .` lints (notebooks included), `uv run ruff format` formats, `uv run pytest` runs that vertical's `tests/`. Commit each vertical's `uv.lock`.
-- Colab: `!git clone` (public, no auth), then `pip install -e ./training` (editable install of the training package).
+- Colab: `!git clone` (public, no auth), then `pip install -e ./training` (editable install of the training package). An editable install registers the package via a `.pth` file that Python only reads at interpreter start, so in the same kernel you must also `sys.path.insert(0, "<repo>/training/src")` (or restart the runtime) before `import training` resolves. The launcher notebooks do this.
 
-## Current state (2026-09-12)
+## Current state (2026-09-14)
 
-- `training/src/training/data/librispeech.py` and the download notebook exist (resumable, md5-verified), plus `training/tests/` (librispeech + notebook regression tests). No feature code yet.
+- `training/src/training/data/librispeech.py` and the download notebook exist and are verified end to end locally on dev-clean (resumable via wget or curl, md5-verified, atomic extract, `summarize()` sanity check against official utterance counts and 16 kHz mono format), plus `training/tests/` (librispeech + notebook regression tests). Still to do: one real run on Colab to record the train-clean-100 download time. No feature code yet.
 - `hardware/` has the PE / buffer / weight BRAM / LUT modules; array, EPU, FSM, top, and testbenches are stubs.
 - `runtime/` and `shared/` are READMEs only.
 - Open decisions: hand-RTL vs FINN-GL as the primary bitstream path; weight loading mechanism; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.
