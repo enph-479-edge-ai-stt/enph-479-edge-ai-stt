@@ -52,7 +52,18 @@ select = [
     "UP",  # pyupgrade
     "B",   # flake8-bugbear
     "SIM", # flake8-simplify
+    "D",   # pydocstyle (Google-style docstrings)
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests and launcher notebooks are exempt from docstring-PRESENCE rules (D1xx);
+# the structural docstring checks (D2xx/D4xx) still apply to any docstring they
+# do carry, so a docstring that exists must still be well-formed.
+"tests/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+"notebooks/**" = ["D100", "D103"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["training"]
