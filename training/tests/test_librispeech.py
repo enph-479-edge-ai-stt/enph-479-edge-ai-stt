@@ -32,8 +32,11 @@ TEN_MINUTES = 16000 * 600  # samples at 16 kHz
 
 
 def _flac_bytes(rate=16000, channels=1, bits=16, total_samples=TEN_MINUTES) -> bytes:
-    """A FLAC file's first 26 bytes: marker, STREAMINFO block header, and the
-    packed rate/channels/bits/total-samples field. Enough for _flac_streaminfo."""
+    """Return a FLAC file's first 26 bytes (marker + STREAMINFO block header).
+
+    Packs the rate/channels/bits/total-samples field the way _flac_streaminfo
+    reads it, which is all the header parsing under test needs.
+    """
     packed = (rate << 44) | ((channels - 1) << 41) | ((bits - 1) << 36) | total_samples
     return b"fLaC" + bytes([0x80]) + (34).to_bytes(3, "big") + bytes(10) + packed.to_bytes(8, "big")
 
@@ -55,8 +58,11 @@ def _make_subset_tree(root, subset, chapters):
 
 
 def _make_subset_tar(build_dir, subset, chapters, meta=("SPEAKERS.TXT",)):
-    """Build <subset>.tar.gz with the real archive layout: LibriSpeech/<subset>/...
-    plus corpus-level metadata files directly under LibriSpeech/."""
+    """Build <subset>.tar.gz with the real archive layout.
+
+    Lays out LibriSpeech/<subset>/... plus corpus-level metadata files directly
+    under LibriSpeech/, matching the OpenSLR archives.
+    """
     src = build_dir / "src"
     _make_subset_tree(src, subset, chapters)
     for name in meta:
@@ -169,7 +175,7 @@ def test_download_subset_skips_when_already_extracted(tmp_path):
 
 
 def test_download_subset_end_to_end_offline(tmp_path, monkeypatch):
-    """get -> md5 -> extract -> delete tar, then a second call is a no-op."""
+    """Get -> md5 -> extract -> delete tar, then a second call is a no-op."""
     tar = _make_subset_tar(tmp_path / "build", "mini", MINI)
     monkeypatch.setitem(AUDIO_SUBSETS, "mini", _md5(tar))
     calls = []
