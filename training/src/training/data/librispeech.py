@@ -90,9 +90,11 @@ def _md5(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def _download_resumable(url: str, out: Path) -> None:
-    """Resumable download: completes a partial file, confirms a complete one,
-    or starts fresh. Prefers wget (ships on Colab/Ubuntu), falls back to curl
-    (ships on Windows 10+ and macOS) so this also runs on a dev box.
+    """Download ``url`` to ``out``, resuming a partial file rather than restarting.
+
+    Completes a partial file, confirms a complete one, or starts fresh. Prefers
+    wget (ships on Colab/Ubuntu), falls back to curl (ships on Windows 10+ and
+    macOS) so this also runs on a dev box.
 
     A non-zero exit with the file already present is tolerated (curl reports
     resuming an already-complete file as an error); the caller's integrity
@@ -111,11 +113,14 @@ def _download_resumable(url: str, out: Path) -> None:
 
 
 def _extract_subset(tar: Path, subset: str, dest: Path) -> Path:
-    """Unpack ``tar`` into a scratch dir under ``dest``, then rename the finished
-    subset dir into ``dest/LibriSpeech/<subset>``. Corpus-level metadata files
-    shipped in every archive (SPEAKERS.TXT, CHAPTERS.TXT, ...) are moved next
-    to it if not already there. The scratch dir is removed at the end, so a
-    session that dies mid-extract leaves no final dir behind."""
+    """Unpack ``tar`` and atomically rename the finished subset dir into place.
+
+    Unpacks into a scratch dir under ``dest``, then renames the subset dir into
+    ``dest/LibriSpeech/<subset>``. Corpus-level metadata files shipped in every
+    archive (SPEAKERS.TXT, CHAPTERS.TXT, ...) are moved next to it if not already
+    there. The scratch dir is removed at the end, so a session that dies
+    mid-extract leaves no final dir behind.
+    """
     root = dest / "LibriSpeech"
     final = root / subset
     scratch = dest / f".extract-{subset}"
@@ -183,9 +188,11 @@ def download(
 
 
 def download_lm(files, dest: str | Path = "data/lm", base_url: str = OPENSLR_11) -> list[Path]:
-    """Download LM resources (resource 11). No published md5; .gz files get a
-    read-through gzip integrity check. Files: e.g. librispeech-lm-norm.txt.gz,
-    3-gram.arpa.gz, 3-gram.pruned.3e-7.arpa.gz, librispeech-vocab.txt.
+    """Download LM resources (OpenSLR resource 11) into ``dest``.
+
+    No published md5, so ``.gz`` files get a read-through gzip integrity check.
+    Files: e.g. librispeech-lm-norm.txt.gz, 3-gram.arpa.gz,
+    3-gram.pruned.3e-7.arpa.gz, librispeech-vocab.txt.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
@@ -210,9 +217,12 @@ def download_lm(files, dest: str | Path = "data/lm", base_url: str = OPENSLR_11)
 
 
 def _flac_streaminfo(path: Path) -> tuple[int, int, int, int] | None:
-    """(sample_rate, channels, bits_per_sample, total_samples) from a FLAC file's
-    STREAMINFO block, which is always the first metadata block after the "fLaC"
-    marker. Reads 26 bytes, no decoder needed. None if the file is not FLAC."""
+    """Read a FLAC file's STREAMINFO fields without decoding the audio.
+
+    Returns ``(sample_rate, channels, bits_per_sample, total_samples)`` from the
+    STREAMINFO block, always the first metadata block after the ``fLaC`` marker;
+    reads 26 bytes, no decoder needed. Returns ``None`` if the file is not FLAC.
+    """
     with open(path, "rb") as f:
         head = f.read(26)
     if len(head) < 26 or head[:4] != b"fLaC" or head[4] & 0x7F != 0:
