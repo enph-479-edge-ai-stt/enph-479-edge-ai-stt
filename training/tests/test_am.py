@@ -1,7 +1,9 @@
-"""Acoustic-model tests: model, features, collate, and an overfit-one-batch
-wiring check. All synthetic (no audio files, no network) and CPU-only, but they
-need the ML stack, so the whole module skips when torch/torchaudio are absent
-(e.g. a lean CI runner that installs neither)."""
+"""Acoustic-model tests: model, features, collate, and an overfit wiring check.
+
+All synthetic (no audio files, no network) and CPU-only, but they need the ML
+stack, so the whole module skips when torch/torchaudio are absent (e.g. a lean
+CI runner that installs neither).
+"""
 
 from __future__ import annotations
 
@@ -78,8 +80,10 @@ def test_collate_pads_and_packs_lengths():
 
 
 def test_overfit_one_batch_drives_loss_down():
-    """The real loss/gradient/CTC wiring on synthetic data: two short sequences
-    that a tiny LSTM should memorize, so CTC loss must fall sharply."""
+    """Exercise the real loss/gradient/CTC wiring on synthetic data.
+
+    Two short sequences a tiny LSTM should memorize, so CTC loss must fall sharply.
+    """
     torch.manual_seed(0)
     model = _tiny_model()
     opt = torch.optim.Adam(model.parameters(), lr=1e-2)

@@ -27,6 +27,8 @@ _DEFAULT_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 @dataclass
 class TrainConfig:
+    """Hyperparameters and paths for a prototype training run."""
+
     n_feats: int = FEATURE_DIM
     n_hidden: int = 256
     n_layers: int = 3
@@ -54,8 +56,11 @@ def save_checkpoint(
     step: int,
     best_cer: float,
 ) -> None:
-    """Atomic save: torch.save to a temp file, then replace the target so a
-    disconnect mid-write can never corrupt the latest checkpoint."""
+    """Write a checkpoint atomically: torch.save to a temp file, then replace.
+
+    Replacing the target rather than writing in place means a disconnect
+    mid-write can never corrupt the latest checkpoint.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -78,6 +83,7 @@ def load_checkpoint(
     opt: torch.optim.Optimizer | None = None,
     map_location: str = "cpu",
 ) -> tuple[int, int, float]:
+    """Load model (and optional optimizer) state; return (epoch, step, best_cer)."""
     ck = torch.load(path, map_location=map_location)
     model.load_state_dict(ck["model"])
     if opt is not None and "opt" in ck:
@@ -176,8 +182,10 @@ def overfit_one_batch(
     n_utts: int = 2,
     steps: int = 100,
 ) -> list[float]:
-    """Overfit a tiny batch to near-zero CTC loss: a wiring sanity check that is
-    independent of data volume. Returns the loss at each step."""
+    """Overfit a tiny batch to near-zero CTC loss as a wiring sanity check.
+
+    Independent of data volume. Returns the loss at each step.
+    """
     device = torch.device(cfg.device)
     ds = LibriSpeechFeatures(items[:n_utts])
     batch = collate([ds[i] for i in range(len(ds))])

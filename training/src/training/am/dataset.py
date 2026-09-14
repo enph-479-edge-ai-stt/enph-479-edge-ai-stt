@@ -25,8 +25,10 @@ Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 def list_utterances(subset_dir: str | Path) -> list[Utterance]:
-    """(flac_path, normalized_transcript) for every utterance under a subset dir,
-    skipping any transcript line whose FLAC is missing."""
+    """List (flac_path, normalized_transcript) for every utterance in a subset dir.
+
+    Skips any transcript line whose FLAC is missing.
+    """
     subset_dir = Path(subset_dir)
     items: list[Utterance] = []
     for trans in sorted(subset_dir.glob("*/*/*.trans.txt")):
@@ -41,8 +43,10 @@ def list_utterances(subset_dir: str | Path) -> list[Utterance]:
 
 
 class LibriSpeechFeatures(Dataset):
-    """One item = (features ``[T, 123]``, label indices ``[L]``). CMVN mean/std,
-    when given, are applied to every item (pass the train-set stats)."""
+    """Dataset yielding (features ``[T, 123]``, label indices ``[L]``) per utterance.
+
+    CMVN mean/std, when given, are applied to every item (pass the train-set stats).
+    """
 
     def __init__(
         self,
@@ -51,15 +55,18 @@ class LibriSpeechFeatures(Dataset):
         std: torch.Tensor | None = None,
         limit: int | None = None,
     ) -> None:
+        """Store the utterance list and optional CMVN stats, and build the transforms."""
         self.items = items[:limit] if limit else items
         self.mean = mean
         self.std = std
         self._mel, self._deltas = mfcc.build_transforms()
 
     def __len__(self) -> int:
+        """Return the number of utterances."""
         return len(self.items)
 
     def features_for(self, flac: str | Path) -> torch.Tensor:
+        """Load a FLAC file and return its CMVN-normalized ``[T, 123]`` features."""
         # Load with soundfile (bundled libsndfile), not torchaudio.load: recent
         # torchaudio routes I/O through TorchCodec, an extra native dependency we
         # do not want on the board or in CI. torchaudio stays for the transforms.
@@ -73,6 +80,7 @@ class LibriSpeechFeatures(Dataset):
         return feats
 
     def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return (features, label indices) for utterance ``i``."""
         flac, text = self.items[i]
         feats = self.features_for(flac)
         labels = torch.tensor(vocab.encode(text), dtype=torch.long)
@@ -88,8 +96,11 @@ def compute_cmvn_over(
 
 
 def collate(batch: list[tuple[torch.Tensor, torch.Tensor]]) -> Batch:
-    """[(feats ``[T,123]``, labels ``[L]``), ...] -> (feats_padded ``[B,Tmax,123]``,
-    feat_lengths ``[B]``, labels_cat ``[sum L]``, label_lengths ``[B]``)."""
+    """Pad a batch of (features, labels) into the tensors ``nn.CTCLoss`` expects.
+
+    Returns (feats_padded ``[B, Tmax, 123]``, feat_lengths ``[B]``, labels_cat
+    ``[sum L]``, label_lengths ``[B]``).
+    """
     feats, labels = zip(*batch, strict=True)
     feat_lengths = torch.tensor([f.size(0) for f in feats], dtype=torch.long)
     label_lengths = torch.tensor([lab.size(0) for lab in labels], dtype=torch.long)

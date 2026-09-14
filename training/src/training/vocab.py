@@ -35,14 +35,20 @@ LEGAL_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZ '")
 
 
 def normalize(text: str) -> str:
-    """Upper-case and drop any character not in the vocab. LibriSpeech is already
-    clean; this is defensive so an unexpected symbol never becomes a label."""
+    """Upper-case and drop any character not in the vocab.
+
+    LibriSpeech is already clean; this is defensive so an unexpected symbol
+    never becomes a label.
+    """
     return "".join(c for c in text.upper() if c in LEGAL_CHARS)
 
 
 def encode(text: str, *, add_eos: bool = False) -> list[int]:
-    """Transcript string -> label indices. ``text`` must already be normalized;
-    an out-of-vocab character raises ``KeyError``. CTC targets normally omit EOS."""
+    """Map a normalized transcript string to label indices.
+
+    ``text`` must already be normalized; an out-of-vocab character raises
+    ``KeyError``. CTC targets normally omit EOS.
+    """
     idx = [_CHAR_TO_IDX[c] for c in text]
     if add_eos:
         idx.append(EOS_IDX)
@@ -60,10 +66,12 @@ def decode(indices: Iterable[int]) -> str:
 
 
 def collapse(indices: Iterable[int]) -> str:
-    """Greedy CTC collapse of a per-frame argmax path: merge runs of identical
-    indices, then drop blanks, then map to characters. A blank between two equal
-    characters is what preserves a double letter (``L _ L`` -> ``LL``), while
-    ``L L`` with no blank collapses to a single ``L``."""
+    """Greedy CTC collapse of a per-frame argmax path.
+
+    Merge runs of identical indices, then drop blanks, then map to characters.
+    A blank between two equal characters preserves a double letter
+    (``L _ L`` -> ``LL``), while ``L L`` with no blank collapses to a single ``L``.
+    """
     kept: list[int] = []
     prev: int | None = None
     for raw in indices:

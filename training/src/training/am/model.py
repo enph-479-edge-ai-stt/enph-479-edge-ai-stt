@@ -19,6 +19,8 @@ from training.vocab import VOCAB_SIZE
 
 
 class AcousticModel(nn.Module):
+    """Deep unidirectional LSTM acoustic model with a CTC output head."""
+
     def __init__(
         self,
         n_feats: int = FEATURE_DIM,
@@ -27,6 +29,7 @@ class AcousticModel(nn.Module):
         n_out: int = VOCAB_SIZE,
         dropout: float = 0.2,
     ) -> None:
+        """Build the LSTM stack and the linear projection to ``n_out`` logits."""
         super().__init__()
         self.lstm = nn.LSTM(
             input_size=n_feats,
@@ -39,8 +42,11 @@ class AcousticModel(nn.Module):
         self.proj = nn.Linear(n_hidden, n_out)
 
     def forward(self, feats: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
-        """feats ``[B, T, n_feats]`` padded, lengths ``[B]`` -> log-probs
-        ``[B, T, n_out]``. Packing keeps the LSTM off the padding frames."""
+        """Map padded feature frames to per-frame log-probabilities.
+
+        ``feats`` is ``[B, T, n_feats]`` padded with ``lengths`` ``[B]``; returns
+        ``[B, T, n_out]``. Packing keeps the LSTM off the padding frames.
+        """
         packed = pack_padded_sequence(feats, lengths.cpu(), batch_first=True, enforce_sorted=False)
         out, _ = self.lstm(packed)
         out, _ = pad_packed_sequence(out, batch_first=True)

@@ -35,8 +35,10 @@ Deltas = torchaudio.transforms.ComputeDeltas
 
 
 def build_transforms() -> tuple[MelSpec, Deltas]:
-    """The stateless transforms reused for every utterance. Cheap to hold once
-    per worker rather than rebuild per call."""
+    """Build the stateless transforms reused for every utterance.
+
+    Cheap to hold once per worker rather than rebuild per call.
+    """
     mel = torchaudio.transforms.MelSpectrogram(
         sample_rate=SAMPLE_RATE,
         n_fft=N_FFT,
@@ -52,7 +54,7 @@ def build_transforms() -> tuple[MelSpec, Deltas]:
 
 
 def extract(waveform: torch.Tensor, mel: MelSpec, deltas: Deltas) -> torch.Tensor:
-    """waveform ``[C, N]`` (16 kHz) -> features ``[T, 123]``, before CMVN.
+    """Waveform ``[C, N]`` (16 kHz) -> features ``[T, 123]``, before CMVN.
 
     Energy is the log of the summed mel-band power (the one-line "bin sum"
     variant); the exact energy definition is a spec choice still to be frozen.
@@ -99,8 +101,10 @@ def apply_cmvn(feats: torch.Tensor, mean: torch.Tensor, std: torch.Tensor) -> to
 
 
 def _iter_features(waveforms: Iterable[torch.Tensor]) -> Iterator[torch.Tensor]:
-    """Helper: extract features for a sequence of raw waveforms with one shared
-    set of transforms. Used by callers that want CMVN over in-memory audio."""
+    """Extract features for a sequence of raw waveforms with shared transforms.
+
+    Used by callers that want CMVN over in-memory audio.
+    """
     mel, deltas = build_transforms()
     for wav in waveforms:
         yield extract(wav, mel, deltas)
