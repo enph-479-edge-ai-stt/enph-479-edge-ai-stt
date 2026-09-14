@@ -10,12 +10,22 @@ authors = [
     { name = "Sudharshan Kannan" },
     { name = "Andrew Du" },
 ]
-dependencies = []
+dependencies = [
+    # Light, cross-platform deps stay locked. jiwer = CER/WER; soundfile (bundled
+    # libsndfile) loads FLAC without torchaudio's TorchCodec I/O backend; numpy
+    # backs both soundfile and torch's array interop.
+    "jiwer>=3.0",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+]
 
 [dependency-groups]
-# Dev tooling only. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is
-# added to `dependencies` as each training stage lands — kept out for now so
-# `uv sync` stays fast and does not try to build heavy/Windows-hostile wheels.
+# Dev tooling only. torch and torchaudio (the heavy ML stack this stage needs)
+# are deliberately NOT locked here: on Colab they are preinstalled, and locally
+# you install a CPU build for tests with `uv pip install torch torchaudio`
+# before `uv run pytest`. Keeping them out of the lock keeps `uv sync` fast and
+# avoids resolving giant, platform-specific CUDA wheels. The AM tests skip
+# themselves when torch/torchaudio are absent (see tests/test_am.py).
 dev = [
     "ruff>=0.8.0",
     "pytest>=8.0",
