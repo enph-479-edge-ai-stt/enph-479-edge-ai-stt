@@ -9,6 +9,7 @@ authors = [
     { name = "Kai Asaoka" },
     { name = "Sudharshan Kannan" },
     { name = "Andrew Du" },
+    { name = "Anubhav Saini" },
 ]
 dependencies = [
     # Light, cross-platform deps stay locked. jiwer = CER/WER; soundfile (bundled

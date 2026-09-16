@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Software monorepo for an FPGA speech-recognition system, ENPH 479 capstone (UBC Engineering Physics, 2026W). Team: Kai Asaoka, Sudharshan Kannan, Andrew Du.
+Software monorepo for an FPGA speech-recognition system, ENPH 479 capstone (UBC Engineering Physics, 2026W). Team: Kai Asaoka, Sudharshan Kannan, Andrew Du, Anubhav Saini.
 
 Reproduces Lee et al., "FPGA-Based Low-Power Speech Recognition with Recurrent Neural Networks" (arXiv:1610.00552) on a modern board: a deep LSTM acoustic model trained with CTC, a character-level LSTM language model, and a KenLM trigram word LM, fused by N-best beam search. Quantized RNN inference runs on the FPGA fabric of a Kria KV260; everything else runs on the board's ARM cores under Linux.
 
