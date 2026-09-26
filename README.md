@@ -23,11 +23,18 @@ on board (KV260)
   mic -> features -> [fabric: acoustic model + char-LM] -> beam search + word-LM -> live transcript
 ```
 
+## Roadmap
+
+The live, real-time system above is the end goal. We get there in two stages:
+
+- **Term 1 (September to January): the RNN running on the fabric, offline.** The hardware runs the trained LSTM on our test data, fed in statically from audio files. In effect it's `model.score()` on audio files, with the FPGA fabric doing the RNN math instead of the GPU. No live audio yet.
+- **Term 2 (January to April): real-time processing.** Streaming audio from the microphone through the same model, and building out the live pipeline described in "What it does".
+
 ## Repository layout
 
 - `hardware/`: Verilog RTL for the LSTM accelerator. In progress; several modules are still empty stubs.
 - `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, and the LSTM + CTC acoustic model, trained from `training/notebooks/am_training.ipynb` on Colab.
-- `runtime/`: the on-board program for the KV260. Not started.
+- `runtime/`: the on-board program for the KV260. Not started; the real-time part is the term 2 goal.
 - `shared/`: frozen cross-vertical specs and golden vectors. Nothing frozen yet.
 
 ## Getting the code

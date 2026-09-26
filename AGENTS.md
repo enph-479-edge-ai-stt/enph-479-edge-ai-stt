@@ -4,6 +4,13 @@ Software monorepo for an FPGA speech-recognition system, ENPH 479 capstone (UBC 
 
 Reproduces Lee et al., "FPGA-Based Low-Power Speech Recognition with Recurrent Neural Networks" (arXiv:1610.00552) on a modern board: a deep LSTM acoustic model trained with CTC, a character-level LSTM language model, and a KenLM trigram word LM, fused by N-best beam search. Quantized RNN inference runs on the FPGA fabric of a Kria KV260; everything else runs on the board's ARM cores under Linux.
 
+## Roadmap
+
+The end goal is the live, real-time system. Build for the current term's target first:
+
+- **Term 1 (September to January), current:** the hardware runs the trained RNN on test data fed in statically from audio files. Effectively `model.score()` on audio files, with the fabric doing the RNN math. Offline, no live audio.
+- **Term 2 (January to April):** real-time processing (mic capture, streaming, the live demo). Don't build real-time pieces before term 2.
+
 ## Three verticals
 
 The repo is split by the three things that get built, each with its own toolchain and its own machine. The verticals share contracts (through `shared/`), not code and not a build environment.
@@ -50,7 +57,7 @@ Turns the trained model into a bitstream and gets it onto the board.
 - Weight loading: either baked into the bitstream as BRAM init, or written over AXI at boot. AXI boot-write is preferred for iteration speed (swap weights without a rebuild). Undecided.
 ### 3. `runtime/` (SoM Linux program)
 
-The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Not started.
+The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Not started; real-time processing is the term 2 target (see Roadmap).
 
 Deliberately absent on the board: PyTorch, any RNN math in software. The ARM only sees feature frames going in and per-frame probability vectors coming out.
 
