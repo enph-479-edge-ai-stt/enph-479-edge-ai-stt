@@ -1,16 +1,13 @@
 """CTC training loop for the acoustic model.
 
-Each epoch ends with greedy dev CER and a checkpoint: ``latest.pt`` every epoch,
-``best.pt`` when dev CER improves, both in ``cfg.run_dir``. Point ``run_dir`` at
-Drive; calling ``train`` again with the same run_dir resumes from ``latest.pt``.
+Runs start to finish in one session: prints greedy dev CER after every epoch and
+returns the trained model. Nothing is saved to disk.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import jiwer
 import torch
@@ -24,7 +21,7 @@ from training.am.model import AcousticModel
 
 @dataclass
 class TrainConfig:
-    """Hyperparameters and the run directory for one training run."""
+    """Hyperparameters for one training run."""
 
     n_hidden: int = 256
     n_layers: int = 3
@@ -35,15 +32,7 @@ class TrainConfig:
     epochs: int = 20
     num_workers: int = 2
     log_every: int = 50  # batches between progress lines
-    run_dir: str = "runs/am"
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def save_checkpoint(path: Path, state: dict) -> None:
-    """``torch.save`` to a temp file, then rename, so a disconnect can't corrupt ``path``."""
-    tmp = path.with_suffix(".tmp")
-    torch.save(state, tmp)
-    tmp.replace(path)
 
 
 @torch.no_grad()
@@ -65,11 +54,9 @@ def train(
     dev_items: list[Utterance],
     mean: torch.Tensor,
     std: torch.Tensor,
-) -> float:
-    """Train (or resume) the run in ``cfg.run_dir``. Returns the best dev CER."""
+) -> AcousticModel:
+    """Train for ``cfg.epochs`` epochs, printing dev CER after each. Returns the model."""
     device = torch.device(cfg.device)
-    run_dir = Path(cfg.run_dir)
-    run_dir.mkdir(parents=True, exist_ok=True)
     loader_kw = {
         "batch_size": cfg.batch_size,
         "collate_fn": collate,
@@ -86,17 +73,8 @@ def train(
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     ctc = nn.CTCLoss(blank=vocab.BLANK_IDX, zero_infinity=True)
 
-    latest = run_dir / "latest.pt"
-    start_epoch, best_cer = 0, float("inf")
-    if latest.exists():
-        ck = torch.load(latest, map_location=device)
-        model.load_state_dict(ck["model"])
-        opt.load_state_dict(ck["opt"])
-        start_epoch, best_cer = ck["epoch"], ck["best_cer"]
-        print(f"resuming {latest} at epoch {start_epoch} (best dev CER {best_cer:.4f})")
-
     n_batches = len(train_loader)
-    for epoch in range(start_epoch, cfg.epochs):
+    for epoch in range(cfg.epochs):
         model.train()
         t0 = time.perf_counter()
         loss_sum = 0.0
@@ -118,23 +96,8 @@ def train(
         train_s = time.perf_counter() - t0
 
         cer = greedy_cer(model, dev_loader, device)
-        improved = cer < best_cer
-        best_cer = min(best_cer, cer)
-        state = {
-            "model": model.state_dict(),
-            "opt": opt.state_dict(),
-            "epoch": epoch + 1,
-            "best_cer": best_cer,
-            "config": dataclasses.asdict(cfg),
-            "cmvn_mean": mean,
-            "cmvn_std": std,
-        }
-        if improved:
-            save_checkpoint(run_dir / "best.pt", state)
-        save_checkpoint(latest, state)
         print(
-            f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | dev CER {cer:.4f}"
-            f"{' (best)' if improved else ''} | train {train_s:.0f}s, "
-            f"eval {time.perf_counter() - t0 - train_s:.0f}s"
+            f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | dev CER {cer:.4f} | "
+            f"train {train_s:.0f}s, eval {time.perf_counter() - t0 - train_s:.0f}s"
         )
-    return best_cer
+    return model

@@ -101,24 +101,9 @@ def test_overfit_one_batch_drives_loss_down():
     assert losses[-1] < 0.4 * losses[0]
 
 
-def test_train_checkpoints_and_resumes(tmp_path):
-    items = list_utterances(_write_subset(tmp_path / "data"))
+def test_train_runs_end_to_end_on_tiny_data(tmp_path):
+    items = list_utterances(_write_subset(tmp_path))
     mean, std = compute_cmvn_over(items)
-    run = tmp_path / "run"
-    cfg = TrainConfig(
-        n_hidden=16,
-        n_layers=1,
-        batch_size=2,
-        epochs=1,
-        num_workers=0,
-        device="cpu",
-        run_dir=str(run),
-    )
-    train(cfg, items, items[:2], mean, std)
-    assert (run / "latest.pt").exists() and (run / "best.pt").exists()
-
-    cfg.epochs = 2  # a second call picks up at epoch 1 instead of starting over
-    train(cfg, items, items[:2], mean, std)
-    ck = torch.load(run / "latest.pt")
-    assert ck["epoch"] == 2
-    assert torch.equal(ck["cmvn_mean"], mean)
+    cfg = TrainConfig(n_hidden=16, n_layers=1, batch_size=2, epochs=1, num_workers=0, device="cpu")
+    model = train(cfg, items, items[:2], mean, std)
+    assert isinstance(model, AcousticModel)
