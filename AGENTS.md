@@ -32,11 +32,12 @@ on board (KV260)
 
 Python package. Notebooks in `training/notebooks/` are thin launchers only; real code lives in modules so Colab sessions are disposable (clone, run, die).
 
-Stages, in order: `data` (LibriSpeech download, transcript cleanup, 31-symbol vocab) -> `features` (123-dim, cached) -> `am` (LSTM + CTC) -> `charlm` -> `wordlm` (KenLM, no training) -> `decode` (beam search prototype, WER via jiwer) -> `qat` (Brevitas QuantLSTM) -> `export` (QONNX + bit-true check).
+What exists: `data` (LibriSpeech download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop), and one notebook, `training/notebooks/am_training.ipynb`. Later stages (char-LM, word-LM, decode, QAT, export) haven't started; don't scaffold them before they do.
 
-- Data: LibriSpeech from OpenSLR 12, LM text and prebuilt ARPAs from OpenSLR 11. Train on `train-clean-100` first, `dev-clean` for tuning, `test-clean` touched once.
-- Colab rules: code in GitHub, artifacts on Drive, shards copied to `/content` scratch before training, resume-from-checkpoint is the default path, pin versions.
-- Stack: PyTorch, torchaudio transforms (TorchCodec for file I/O), Brevitas, qonnx, KenLM, jiwer, pyctcdecode as the reference decoder only.
+- Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once.
+- Colab: code in GitHub, checkpoints on Drive, audio downloaded to `/content` scratch each session, re-running the notebook resumes from the last checkpoint.
+- Stack: PyTorch, torchaudio transforms, soundfile for FLAC I/O, jiwer.
+- Keep it lean: build the one path the notebook runs. No fallbacks, no options nothing uses, no code for stages that haven't started.
 - The feature pipeline here is the reference the runtime numpy code must bit-match.
 
 ### 2. `hardware/` (hardware design + build + flash)
@@ -49,9 +50,9 @@ Turns the trained model into a bitstream and gets it onto the board.
 - Weight loading: either baked into the bitstream as BRAM init, or written over AXI at boot. AXI boot-write is preferred for iteration speed (swap weights without a rebuild). Undecided.
 ### 3. `runtime/` (SoM Linux program)
 
-The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Planned modules (create folders as each starts): `capture/` (ALSA + sounddevice ring buffer), `features_np/` (numpy port of the training features, must bit-match `shared/golden/`), `pynq_driver/` (Overlay / allocate / DMA / MMIO wrapper), `decoder/` (beam search + kenlm, Python prototype then C port), `frontend/` (websocket + browser dashboard), `bare_metal/` (stretch, no-OS C variant for the power delta).
+The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Not started.
 
-Deliberately absent on the board: PyTorch, pyctcdecode, any RNN math in software. The ARM only sees feature frames going in and 31-dim probability vectors coming out.
+Deliberately absent on the board: PyTorch, any RNN math in software. The ARM only sees feature frames going in and per-frame probability vectors coming out.
 
 ## Hardware (confirmed)
 
@@ -66,7 +67,7 @@ Board and chip facts below were checked against the AMD K26 product brief and th
 | PS: GPU | Mali-400 MP2 | Irrelevant |
 | PL: logic | 256K system logic cells (~117K LUT / ~234K FF) | State machines, DMA plumbing, activations |
 | PL: DSP slices | 1,248 | MAC array (paper used 512 PEs) |
-| PL: on-chip SRAM | 26.6 Mb (144 BRAM + 64 URAM blocks) | All weights resident on-chip (~8.8 Mb for the paper's large model) |
+| PL: on-chip SRAM | 26.6 Mb (144 BRAM + 64 URAM blocks) | All weights resident on-chip (~8.8 Mb for the paper's small model at 6 bits) |
 | Memory | 4 GB 64-bit DDR4, 16 GB eMMC, QSPI boot flash | Word-LM ARPA lives in DDR4 |
 | Carrier I/O | 4x USB 2.0/3.0, 1 GbE, DisplayPort/HDMI, microSD, 12 V jack | USB mic (no analog audio in), ethernet to the browser |
 
@@ -74,16 +75,16 @@ Board and chip facts below were checked against the AMD K26 product brief and th
 
 **Day-to-day loop:** build on the Linux box -> scp `.bit` + `.hwh` to the board -> ssh or Jupyter -> `Overlay()` -> stream frames over AXI-DMA -> read probabilities -> decode on ARM.
 
-**Reference paper hardware, for comparison** (from the PDF): Xilinx XC7Z045 on a ZC706, 2.18 MB on-chip memory, 512 PEs (two arrays of 256) at 100 MHz, ARM at 800 MHz running the N-best search. 6-bit weights, 8-bit signals, 16-bit LSTM cells. Peephole LSTM. The FPGA ran the small model (3x256 AM, 2x256 char-LM, beam 128) at 9.24 W and 4.12x real time. The large model (4x512 AM, 2x512 char-LM) gave the headline 8.79% WER / 3.90% CER on WSJ eval92 and needs an UltraScale-class part, which the KV260 is. Power will not be apples-to-apples (28 nm vs 16 nm); frame it as a reproduction on a current platform.
+**Reference paper hardware, for comparison** (from the PDF): Xilinx XC7Z045 on a ZC706, 2.18 MB on-chip memory, 512 PEs (two arrays of 256) at 100 MHz, ARM at 800 MHz running the N-best search. 6-bit weights, 8-bit signals, 16-bit LSTM cells. Peephole LSTM. The FPGA ran the small model (3x256 AM, 2x256 char-LM, 6-bit weights, beam 128) at 9.24 W and 4.12x real time, scoring 14.02% WER / 6.02% CER on WSJ eval92. That is this project's target. The headline 8.79% WER / 3.90% CER is the large model (4x512 AM, 2x512 char-LM, 15.1M params) in floating point on a GPU; at ~90 Mb of 6-bit weights it doesn't fit the KV260's 26.6 Mb on-chip either. Power will not be apples-to-apples (28 nm vs 16 nm); frame it as a reproduction on a current platform.
 
 ## Cross-vertical contracts (why this is one repo)
 
 The verification gates are bit-exact contracts that cross folder boundaries. Keep them in `shared/` and treat any change there as a breaking change for all three verticals.
 
 - **Features:** 16 kHz mono, 25 ms Hamming window, 10 ms hop, 40 log-mel + energy + delta + double-delta = 123 dims, normalized on training-set statistics, quantized to int8 at the fabric boundary. 100 frames/s. Pin the exact CMVN recipe in `shared/specs/` before anything downstream bakes it in.
-- **Vocabulary:** 31 symbols (26 letters, 3 punctuation, end-of-sentence, CTC blank). Fixed integer mapping; changing it invalidates every trained artifact.
+- **Vocabulary:** provisional 30 symbols (26 letters, space, apostrophe, end-of-sentence, CTC blank at index 0; LibriSpeech has no other punctuation), in `training/src/training/vocab.py`. Fixed integer mapping once frozen; changing it invalidates every trained artifact.
 - **Quantization:** 6-bit weights, 8-bit activations, 16-bit cell state.
-- **Fabric interface:** 123 x int8 in per frame, 31 x int8 out per frame, over AXI-DMA. Char-LM control (char + context id) over MMIO.
+- **Fabric interface:** 123 x int8 in per frame, one int8 per vocab symbol out per frame, over AXI-DMA. Char-LM control (char + context id) over MMIO.
 - **Golden vectors:** audio -> features, and QONNX CPU-execution outputs. The board must match the QONNX CPU run bit-for-bit.
 
 Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == QONNX CPU, bit-for-bit; V4 end-to-end WER through the board; V5 sustained real-time factor >= 1 and mic-to-screen latency in budget. No power or latency number is reported until V3 passes.
@@ -102,14 +103,14 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 ## Environments
 
 - Each vertical is its own **independent uv project** — its own `pyproject.toml`, `.python-version`, `uv.lock`, and venv — because the verticals run on different machines, hardware, and even Python versions. This is deliberately *not* a uv workspace (a workspace shares one lockfile / venv / Python version across members, which is the opposite of what we want). Nothing builds all three at once.
-- `training/` is the only Python project today: src layout (package under `training/src/training/`, `import training.data...`), pinned to Python 3.12.0, hatchling backend, with ruff + pytest config and a `dev` dependency group (ruff, pytest) in `training/pyproject.toml`. `runtime/` gets the same treatment when its first module lands; `hardware/` is Verilog, no Python. The ML stack (torch, brevitas, qonnx, kenlm, jiwer, ...) is intentionally kept out of `dependencies` until each stage lands, so `uv sync` stays fast.
+- `training/` is the only Python project today: src layout (package under `training/src/training/`, `import training.data...`), pinned to Python 3.12.0, hatchling backend, with ruff + pytest config and a `dev` dependency group (ruff, pytest) in `training/pyproject.toml`. `runtime/` gets the same treatment when its first module lands; `hardware/` is Verilog, no Python. torch and torchaudio are intentionally not locked (Colab preinstalls them; locally, `uv pip install torch torchaudio` to run the AM tests), so `uv sync` stays fast.
 - Venvs must live outside OneDrive (OneDrive evicts package files and corrupts in-folder venvs). This repo is inside OneDrive, so before running any uv command point uv at an external venv by setting `UV_PROJECT_ENVIRONMENT` to an absolute path outside OneDrive (one per vertical) — uv's default in-folder `./.venv` must not be used. Building from the OneDrive-hosted source is fine; only the installed venv needs to sit elsewhere.
 - Dev loop (run inside the vertical, e.g. `cd training`, with `UV_PROJECT_ENVIRONMENT` set): `uv sync` creates/updates the venv and installs the `dev` group; `uv run ruff check .` lints (notebooks included), `uv run ruff format` formats, `uv run pytest` runs that vertical's `tests/`. Commit each vertical's `uv.lock`.
-- Colab: `!git clone` (public, no auth), then `pip install -e ./training` (editable install of the training package). An editable install registers the package via a `.pth` file that Python only reads at interpreter start, so in the same kernel you must also `sys.path.insert(0, "<repo>/training/src")` (or restart the runtime) before `import training` resolves. The launcher notebooks do this.
+- Colab: `!git clone` (public, no auth), then `pip install -e ./training` (editable install of the training package). An editable install registers the package via a `.pth` file that Python only reads at interpreter start, so in the same kernel you must also `sys.path.insert(0, "<repo>/training/src")` (or restart the runtime) before `import training` resolves. The notebook does this.
 
-## Current state (2026-09-14)
+## Current state (2026-09-26)
 
-- `training/src/training/data/librispeech.py` and the download notebook exist and are verified end to end locally on dev-clean (resumable via wget or curl, md5-verified, atomic extract, `summarize()` sanity check against official utterance counts and 16 kHz mono format), plus `training/tests/` (librispeech + notebook regression tests). Still to do: one real run on Colab to record the train-clean-100 download time. No feature code yet.
-- `hardware/` has the PE / buffer / weight BRAM / LUT modules; array, EPU, FSM, top, and testbenches are stubs.
+- `training/`: download, features, vocab and the AM training loop exist, run from `am_training.ipynb` on Colab (T4). The smoke test passed on Colab; the first real training run on train-clean-100 is next. The AM tests skip on CI because torch isn't a locked dependency, so CI only covers vocab, download and notebook structure.
+- `hardware/`: the PE / buffer / weight BRAM / LUT / context memory modules exist; array, EPU, FSM, tile, output, top and all testbenches are empty stubs. `tanh_lut.v` declares `module sigmoid_lut` (name clash), and `sigmoid_lut.v` is a 16-entry table.
 - `runtime/` and `shared/` are READMEs only.
 - Open decisions: hand-RTL vs FINN-GL as the primary bitstream path; weight loading mechanism; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.

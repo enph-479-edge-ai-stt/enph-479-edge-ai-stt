@@ -1,14 +1,11 @@
 # training/
 
-The offline pipeline (Python, runs on a GPU). It produces the QONNX file and frozen quantized weights that the `hardware/` flow synthesizes into a bitstream.
+The offline pipeline (Python). Today it trains the acoustic model on Colab.
 
-## Stages
+- `notebooks/am_training.ipynb`: the Colab launcher (download, CMVN, train, checkpoints to Drive).
+- `src/training/data/librispeech.py`: LibriSpeech download (wget, md5 check, extract).
+- `src/training/features/fbank.py`: 123-dim log-mel filterbank features and CMVN (provisional spec).
+- `src/training/vocab.py`: 30-symbol character vocab (provisional).
+- `src/training/am/`: the LSTM + CTC model, the dataset, and the training loop.
 
-1. `data`: LibriSpeech download, transcript cleaning, 31-symbol vocab build
-2. `features`: 123-dim log-mel + delta + double-delta + CMVN, cached. This is the reference the runtime feature code must match.
-3. `am`: LSTM acoustic model trained with CTC
-4. `charlm`: character-level LSTM language model
-5. `wordlm`: KenLM trigram word language model (ARPA to binary)
-6. `decode`: N-best beam search fusing acoustic, char-LM, and word-LM scores; WER via jiwer
-7. `qat`: Brevitas quantization-aware training (6-bit weights, 8-bit activations, 16-bit cell)
-8. `export`: Brevitas to QONNX, with a bit-true check against the fixed-point reference
+The later stages (char-LM, word-LM, decoding, QAT, export) haven't started.

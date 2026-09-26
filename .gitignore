@@ -29,16 +29,12 @@ wandb/
 *.arpa.gz
 *.klm
 
-# --- FPGA build junk (the submodule also has its own .gitignore) ---
+# --- FPGA build junk ---
 *.bit
 *.xsa
 *.jou
 *.log
 .Xil/
-
-# --- Frontend ---
-node_modules/
-dist/
 
 # --- OS ---
 .DS_Store
