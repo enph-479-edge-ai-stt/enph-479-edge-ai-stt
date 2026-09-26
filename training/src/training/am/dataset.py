@@ -1,11 +1,8 @@
-"""LibriSpeech -> (features, label) dataset for CTC training.
+"""LibriSpeech utterances -> (features, labels) for CTC training.
 
-Extracts 123-dim features from FLAC on the fly. This is the self-contained
-smoke-test path; the production run reads cached feature shards instead of
-decoding audio every epoch. ``collate`` packs a batch into exactly what
-``nn.CTCLoss`` wants: padded features + concatenated labels + both length
-vectors. No alignment and no per-frame labels: that is CTC's job, not the
-dataset's.
+Features are extracted from the FLAC on the fly, inside the DataLoader workers
+(no feature cache). ``collate`` packs a batch into what ``nn.CTCLoss`` wants:
+padded features, concatenated labels, and both length vectors.
 """
 
 from __future__ import annotations
@@ -14,96 +11,70 @@ from pathlib import Path
 
 import soundfile as sf
 import torch
-import torchaudio
-from torch.utils.data import Dataset
+from torch.utils.data import DataLoader, Dataset
 
 from training import vocab
-from training.features import mfcc
+from training.features import fbank
 
 Utterance = tuple[Path, str]
 Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 def list_utterances(subset_dir: str | Path) -> list[Utterance]:
-    """List (flac_path, normalized_transcript) for every utterance in a subset dir.
-
-    Skips any transcript line whose FLAC is missing.
-    """
-    subset_dir = Path(subset_dir)
+    """(flac path, transcript) for every utterance in a LibriSpeech subset dir, sorted."""
     items: list[Utterance] = []
-    for trans in sorted(subset_dir.glob("*/*/*.trans.txt")):
+    for trans in sorted(Path(subset_dir).glob("*/*/*.trans.txt")):
         for line in trans.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
             utt_id, _, text = line.partition(" ")
-            flac = trans.parent / f"{utt_id}.flac"
-            if flac.is_file():
-                items.append((flac, vocab.normalize(text)))
+            items.append((trans.parent / f"{utt_id}.flac", text))
     return items
 
 
 class LibriSpeechFeatures(Dataset):
-    """Dataset yielding (features ``[T, 123]``, label indices ``[L]``) per utterance.
-
-    CMVN mean/std, when given, are applied to every item (pass the train-set stats).
-    """
+    """(features ``[T, 123]``, labels ``[L]``) per utterance, CMVN-normalized if given stats."""
 
     def __init__(
         self,
         items: list[Utterance],
         mean: torch.Tensor | None = None,
         std: torch.Tensor | None = None,
-        limit: int | None = None,
     ) -> None:
-        """Store the utterance list and optional CMVN stats, and build the transforms."""
-        self.items = items[:limit] if limit else items
+        """Store the utterances and CMVN stats, and build the feature transforms."""
+        self.items = items
         self.mean = mean
         self.std = std
-        self._mel, self._deltas = mfcc.build_transforms()
+        self._mel, self._deltas = fbank.build_transforms()
 
     def __len__(self) -> int:
         """Return the number of utterances."""
         return len(self.items)
 
-    def features_for(self, flac: str | Path) -> torch.Tensor:
-        """Load a FLAC file and return its CMVN-normalized ``[T, 123]`` features."""
-        # Load with soundfile (bundled libsndfile), not torchaudio.load: recent
-        # torchaudio routes I/O through TorchCodec, an extra native dependency we
-        # do not want on the board or in CI. torchaudio stays for the transforms.
-        data, sr = sf.read(str(flac), dtype="float32", always_2d=True)  # [N, C]
-        wav = torch.from_numpy(data.T.copy())  # [C, N]
-        if sr != mfcc.SAMPLE_RATE:
-            wav = torchaudio.functional.resample(wav, sr, mfcc.SAMPLE_RATE)
-        feats = mfcc.extract(wav, self._mel, self._deltas)
-        if self.mean is not None and self.std is not None:
-            feats = mfcc.apply_cmvn(feats, self.mean, self.std)
-        return feats
-
     def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return (features, label indices) for utterance ``i``."""
+        """Load utterance ``i``'s FLAC (16 kHz mono) and return (features, labels)."""
         flac, text = self.items[i]
-        feats = self.features_for(flac)
-        labels = torch.tensor(vocab.encode(text), dtype=torch.long)
-        return feats, labels
+        wav, _ = sf.read(str(flac), dtype="float32")
+        feats = fbank.extract(torch.from_numpy(wav).unsqueeze(0), self._mel, self._deltas)
+        if self.mean is not None:
+            feats = fbank.apply_cmvn(feats, self.mean, self.std)
+        return feats, torch.tensor(vocab.encode(text))
 
 
 def compute_cmvn_over(
-    items: list[Utterance], limit: int | None = None
+    items: list[Utterance], num_workers: int = 0
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Global CMVN over the given utterances (pass TRAIN items only)."""
-    ds = LibriSpeechFeatures(items, limit=limit)
-    return mfcc.compute_cmvn(ds.features_for(flac) for flac, _ in ds.items)
+    """Global CMVN mean/std over ``items`` (pass training utterances only)."""
+    loader = DataLoader(LibriSpeechFeatures(items), batch_size=None, num_workers=num_workers)
+    return fbank.compute_cmvn(feats for feats, _ in loader)
 
 
 def collate(batch: list[tuple[torch.Tensor, torch.Tensor]]) -> Batch:
-    """Pad a batch of (features, labels) into the tensors ``nn.CTCLoss`` expects.
-
-    Returns (feats_padded ``[B, Tmax, 123]``, feat_lengths ``[B]``, labels_cat
-    ``[sum L]``, label_lengths ``[B]``).
-    """
+    """Pad a batch: (feats ``[B, Tmax, 123]``, feat lengths, labels ``[sum L]``, label lengths)."""
     feats, labels = zip(*batch, strict=True)
-    feat_lengths = torch.tensor([f.size(0) for f in feats], dtype=torch.long)
-    label_lengths = torch.tensor([lab.size(0) for lab in labels], dtype=torch.long)
-    feats_padded = torch.nn.utils.rnn.pad_sequence(feats, batch_first=True)
-    labels_cat = torch.cat(labels)
-    return feats_padded, feat_lengths, labels_cat, label_lengths
+    feat_len = torch.tensor([f.size(0) for f in feats])
+    label_len = torch.tensor([lab.size(0) for lab in labels])
+    return (
+        torch.nn.utils.rnn.pad_sequence(feats, batch_first=True),
+        feat_len,
+        torch.cat(labels),
+        label_len,
+    )
