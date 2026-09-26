@@ -1,13 +1,14 @@
 """CTC training loop for the acoustic model.
 
-Runs start to finish in one session: prints greedy dev CER after every epoch and
-returns the trained model. Nothing is saved to disk.
+Runs start to finish in one session: logs greedy test CER after every epoch (to the
+notebook output and a log file) and returns the trained model.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import jiwer
 import torch
@@ -48,12 +49,24 @@ def greedy_cer(model: AcousticModel, loader: DataLoader, device: torch.device) -
     return float(jiwer.cer(refs, hyps))
 
 
-def train(cfg: TrainConfig, datasets: dict[str, list[Dataset]]) -> AcousticModel:
-    """Train on all of ``datasets["train"]``; after each epoch, print CER on all of ``"test"``.
+def _log(log_path: Path, msg: str) -> None:
+    print(msg)
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+
+
+def train(
+    cfg: TrainConfig, datasets: dict[str, list[Dataset]], log_path: str | Path
+) -> AcousticModel:
+    """Train on all of ``datasets["train"]``; after each epoch, log CER on all of ``"test"``.
 
     Each role is a list of datasets in any format, pooled together. A dataset only has to
-    yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Returns the model.
+    yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
+    epoch lines are printed and written to ``log_path`` (overwritten). Returns the model.
     """
+    log_path = Path(log_path)
+    log_path.write_text("", encoding="utf-8")
+    _log(log_path, str(cfg))
     device = torch.device(cfg.device)
     loader_kw = {
         "batch_size": cfg.batch_size,
@@ -85,15 +98,17 @@ def train(cfg: TrainConfig, datasets: dict[str, list[Dataset]]) -> AcousticModel
             loss_sum += loss.item()
             if b % cfg.log_every == 0:
                 s_per_batch = (time.perf_counter() - t0) / b
-                print(
+                _log(
+                    log_path,
                     f"epoch {epoch} batch {b}/{n_batches} loss {loss_sum / b:.3f} "
-                    f"({s_per_batch:.2f} s/batch)"
+                    f"({s_per_batch:.2f} s/batch)",
                 )
         train_s = time.perf_counter() - t0
 
         cer = greedy_cer(model, test_loader, device)
-        print(
+        _log(
+            log_path,
             f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | test CER {cer:.4f} | "
-            f"train {train_s:.0f}s, eval {time.perf_counter() - t0 - train_s:.0f}s"
+            f"train {train_s:.0f}s, eval {time.perf_counter() - t0 - train_s:.0f}s",
         )
     return model

@@ -112,5 +112,6 @@ def test_train_runs_end_to_end_on_tiny_data(tmp_path):
         ],
         "test": [LibriSpeechFeatures(items[:2], mean, std)],
     }
-    model = train(cfg, datasets)
+    model = train(cfg, datasets, tmp_path / "train.log")
     assert isinstance(model, AcousticModel)
+    assert "[epoch 0]" in (tmp_path / "train.log").read_text(encoding="utf-8")
