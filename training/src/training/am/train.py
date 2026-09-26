@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import jiwer
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from training import vocab
 from training.am.dataset import collate
@@ -48,10 +48,11 @@ def greedy_cer(model: AcousticModel, loader: DataLoader, device: torch.device) -
     return float(jiwer.cer(refs, hyps))
 
 
-def train(cfg: TrainConfig, datasets: dict[str, Dataset]) -> AcousticModel:
-    """Train on ``datasets["train"]``; after each epoch, print greedy CER on every other entry.
+def train(cfg: TrainConfig, datasets: dict[str, list[Dataset]]) -> AcousticModel:
+    """Train on all of ``datasets["train"]``; after each epoch, print CER on all of ``"test"``.
 
-    Every entry yields CMVN-normalized (features, labels) pairs. Returns the model.
+    Each role is a list of datasets in any format, pooled together. A dataset only has to
+    yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Returns the model.
     """
     device = torch.device(cfg.device)
     loader_kw = {
@@ -60,10 +61,8 @@ def train(cfg: TrainConfig, datasets: dict[str, Dataset]) -> AcousticModel:
         "num_workers": cfg.num_workers,
         "pin_memory": device.type == "cuda",
     }
-    train_loader = DataLoader(datasets["train"], shuffle=True, **loader_kw)
-    eval_loaders = {
-        name: DataLoader(ds, **loader_kw) for name, ds in datasets.items() if name != "train"
-    }
+    train_loader = DataLoader(ConcatDataset(datasets["train"]), shuffle=True, **loader_kw)
+    test_loader = DataLoader(ConcatDataset(datasets["test"]), **loader_kw)
 
     model = AcousticModel(n_hidden=cfg.n_hidden, n_layers=cfg.n_layers, dropout=cfg.dropout)
     model.to(device)
@@ -92,12 +91,9 @@ def train(cfg: TrainConfig, datasets: dict[str, Dataset]) -> AcousticModel:
                 )
         train_s = time.perf_counter() - t0
 
-        cers = " | ".join(
-            f"{name} CER {greedy_cer(model, loader, device):.4f}"
-            for name, loader in eval_loaders.items()
-        )
+        cer = greedy_cer(model, test_loader, device)
         print(
-            f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | {cers} | "
+            f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | test CER {cer:.4f} | "
             f"train {train_s:.0f}s, eval {time.perf_counter() - t0 - train_s:.0f}s"
         )
     return model

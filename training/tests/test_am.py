@@ -105,9 +105,12 @@ def test_train_runs_end_to_end_on_tiny_data(tmp_path):
     items = list_utterances(_write_subset(tmp_path))
     mean, std = compute_cmvn_over(items)
     cfg = TrainConfig(n_hidden=16, n_layers=1, batch_size=2, epochs=1, num_workers=0, device="cpu")
-    datasets = {
-        "train": LibriSpeechFeatures(items, mean, std),
-        "dev": LibriSpeechFeatures(items[:2], mean, std),
+    datasets = {  # two train datasets, to check they get pooled
+        "train": [
+            LibriSpeechFeatures(items[:2], mean, std),
+            LibriSpeechFeatures(items[2:], mean, std),
+        ],
+        "test": [LibriSpeechFeatures(items[:2], mean, std)],
     }
     model = train(cfg, datasets)
     assert isinstance(model, AcousticModel)
