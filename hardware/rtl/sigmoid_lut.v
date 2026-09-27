@@ -1,5 +1,26 @@
 `timescale 1ps / 1ps
 
+//=====================================================================
+// Module: sigmoid_lut.v
+// Description:
+//  Combinational sigmoid activation lookup table. Maps a quantized
+//  index to an unsigned 8-bit sigmoid value, so the datapath never
+//  needs a real sigmoid. LUT_PRECISION entries cover the input range
+//  symmetrically about zero: index LUT_PRECISION/2 is sigmoid(0), held
+//  as 128 (0.5 in 8-bit unsigned scale), and the entries at either end
+//  saturate at 0 / 255. Purely combinational, so the result is
+//  available in the same cycle as the index.
+//
+// Parameters:
+//  LUT_BIT_WIDTH           - bit width of a stored LUT entry (unsigned)
+//  LUT_PRECISION           - number of LUT entries, must be 2**INPUT_BIT_WIDTH
+//  INPUT_BIT_WIDTH         - bit width of the index port
+//  SIGMOID_OUTPUT_WIDTH    - bit width of the output value (unsigned)
+// Ports:
+//  index               - quantized input, selects the LUT entry
+//  sigmoid_output      - unsigned sigmoid value for that entry
+//=====================================================================
+
 module sigmoid_lut #(
     parameter LUT_BIT_WIDTH = 8,
     parameter LUT_PRECISION = 16,
