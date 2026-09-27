@@ -11,7 +11,7 @@
 //
 // Parameters:
 //  WEIGHT_COUNT            - number of rows (input weight entries)
-//  WEIGHT_ELEMENT_WIDTH    - bit width of a sigle weight (6-bit quantized)
+//  WEIGHT_ELEMENT_WIDTH    - bit width of a single weight (6-bit quantized)
 //  NEURON_COUNT            - number of neurons
 //  ADDR_WIDTH              - address width, sized to WEIGHT_COUNT ROWS
 // Ports:
