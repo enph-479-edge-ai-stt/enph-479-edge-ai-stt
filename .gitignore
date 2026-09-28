@@ -36,6 +36,10 @@ wandb/
 *.log
 .Xil/
 
+# --- RTL simulation output (iverilog / vvp / GTKWave) ---
+*.vcd
+*.vvp
+
 # --- Frontend ---
 node_modules/
 dist/
