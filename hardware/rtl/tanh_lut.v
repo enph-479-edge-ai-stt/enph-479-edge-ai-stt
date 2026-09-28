@@ -1,6 +1,6 @@
 `timescale 1ps / 1ps
 
-module sigmoid_lut #(
+module tanh_lut #(
     parameter LUT_BIT_WIDTH = 8,
     parameter LUT_PRECISION = 16,
     parameter INPUT_BIT_WIDTH = 4,

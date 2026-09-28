@@ -22,14 +22,21 @@
 //=====================================================================
 
 module pe_buffer #(
-    parameter OUTPUT_ELEMENT_WIDTH = 24
+    parameter OUTPUT_ELEMENT_WIDTH = 16, // pretty sure output element width is 16
+    parameter PE_INPUT_ARRAY_SIZE = 256
 ) (
     input wire clk,
     input wire rst,
     input wire enable,
     
-    input wire signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_output,
+    input wire signed [PE_INPUT_ARRAY_SIZE * OUTPUT_ELEMENT_WIDTH-1:0] pe_input0,
+    input wire signed [PE_INPUT_ARRAY_SIZE * OUTPUT_ELEMENT_WIDTH-1:0] pe_input1,
+
     input wire [1:0] buffer_select, // Two bits to represent 4 different PE output buffers
+    input wire input_select, // 0 for pe_input0, 1 for pe_input1
+    input wire [7:0] input_index, // index of the input to copy into the buffer
+
+    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_output;
 
     output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_i,
     output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_f,
@@ -45,6 +52,9 @@ module pe_buffer #(
             pe_c <= 0;
         end
         else if (enable) begin
+
+            pe_output = (input_select == 1'b0) ? pe_input0[input_index * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH] : pe_input1[input_index * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH];
+
             if(buffer_select == 2'd0)
                 pe_i <= pe_output;
             else if (buffer_select == 2'd1)
