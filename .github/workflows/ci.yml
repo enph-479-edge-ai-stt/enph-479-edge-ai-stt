@@ -1,18 +1,42 @@
 name: CI
 
 # Per-vertical jobs. Each vertical is an independent uv project, so its job runs
-# in that vertical's directory and only fires when that vertical (or this file)
-# changes. Add a new job per vertical as it grows Python code.
+# in that vertical's directory and only runs when that vertical (or this file)
+# changes. Add a filter and a job per vertical as it grows Python code.
+#
+# The workflow itself runs on every PR and the `changes` job decides which
+# vertical jobs run. Don't move the path filter back to `on.paths`: `training` is
+# a required check on main, and a job skipped by `if:` reports success, but a
+# workflow skipped by `on.paths` leaves the check pending and blocks the merge.
 on:
   pull_request:
     branches: [main]
-    paths: ["training/**", ".github/workflows/ci.yml"]
   push:
     branches: [main]
-    paths: ["training/**", ".github/workflows/ci.yml"]
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      training: ${{ steps.filter.outputs.training }}
+    steps:
+      # PRs are diffed through the API; pushes to main are diffed with git, which needs the checkout.
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            training:
+              - "training/**"
+              - ".github/workflows/ci.yml"
+
   training:
+    needs: changes
+    if: needs.changes.outputs.training == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
