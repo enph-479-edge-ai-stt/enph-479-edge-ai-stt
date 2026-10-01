@@ -39,9 +39,9 @@ on board (KV260)
 
 Python package. Notebooks in `training/notebooks/` are thin launchers only; real code lives in modules so Colab sessions are disposable (clone, run, die).
 
-What exists: `data` (LibriSpeech download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop), and one notebook, `training/notebooks/am_training.ipynb`. Later stages (char-LM, word-LM, decode, QAT, export) haven't started; don't scaffold them before they do.
+What exists: `data` (LibriSpeech audio + LM-text download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop), `cm` (character model, the paper's char-LM: one-hot in, LSTM, truncated BPTT over an EOS-joined stream of LM-text sentences, Adam), and two notebooks, `training/notebooks/am_training.ipynb` and `cm_training.ipynb`. Later stages (word-LM, decode, QAT, export) haven't started; don't scaffold them before they do.
 
-- Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once.
+- Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once. The char-LM trains on a random sample of the normalized LibriSpeech LM text (OpenSLR 11, dev/test books excluded) and is scored in bits per character on the dev-clean transcripts.
 - Colab: code in GitHub; each run downloads audio to `/content` scratch and trains start to finish in one session (no checkpoints, no resume), then saves the final weights + CMVN (`am.pt`) and the training log to a timestamped run folder on Google Drive.
 - Stack: PyTorch, torchaudio transforms, soundfile for FLAC I/O, jiwer.
 - Keep it lean: build the one path the notebook runs. No fallbacks, no options nothing uses, no code for stages that haven't started.
