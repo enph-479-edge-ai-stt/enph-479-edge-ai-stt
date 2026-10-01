@@ -18,6 +18,7 @@ VOCAB_SIZE = len(CHARS)
 BLANK_IDX = 0
 
 _CHAR_TO_IDX = {c: i for i, c in enumerate(CHARS)}
+EOS_IDX = _CHAR_TO_IDX[EOS]
 
 
 def encode(text: str) -> list[int]:
