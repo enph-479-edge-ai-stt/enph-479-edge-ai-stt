@@ -1,1 +1,1 @@
-"""LibriSpeech download."""
+"""LibriSpeech audio and LM text download."""

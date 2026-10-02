@@ -39,9 +39,9 @@ on board (KV260)
 
 Python package. Notebooks in `training/notebooks/` are thin launchers only; real code lives in modules so Colab sessions are disposable (clone, run, die).
 
-What exists: `data` (LibriSpeech download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop), and one notebook, `training/notebooks/am_training.ipynb`. Later stages (char-LM, word-LM, decode, QAT, export) haven't started; don't scaffold them before they do.
+What exists: `data` (LibriSpeech audio + LM-text download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop), `cm` (character model, the paper's char-LM: one-hot in, LSTM, truncated BPTT over an EOS-joined stream of LM-text sentences, Adam), and two notebooks, `training/notebooks/am_training.ipynb` and `cm_training.ipynb`. Later stages (word-LM, decode, QAT, export) haven't started; don't scaffold them before they do.
 
-- Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once.
+- Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once. The char-LM trains on a random sample of the normalized LibriSpeech LM text (OpenSLR 11, dev/test books excluded) and is scored in bits per character on the dev-clean transcripts.
 - Colab: code in GitHub; each run downloads audio to `/content` scratch and trains start to finish in one session (no checkpoints, no resume), then saves the final weights + CMVN (`am.pt`) and the training log to a timestamped run folder on Google Drive.
 - Stack: PyTorch, torchaudio transforms, soundfile for FLAC I/O, jiwer.
 - Keep it lean: build the one path the notebook runs. No fallbacks, no options nothing uses, no code for stages that haven't started.
@@ -101,7 +101,7 @@ Gates: V1 greedy CER during float training; V2 WER holds after QAT; V3 board == 
 - **Always create worktrees from `main`.** Never from another feature branch, and never from whatever branch happens to be checked out. Fetch first so `main` is current:
   `git fetch origin && git worktree add ../stt-<name> -b feat/<name> origin/main`
 - `main` is the integration branch. Rebase or merge `main` in before opening a PR.
-- Before opening a PR, lint and tests must pass in the affected vertical (e.g. `cd training`): `uv run ruff check .` and `uv run pytest` (with `UV_PROJECT_ENVIRONMENT` set — see Environments). CI (`.github/workflows/ci.yml`) runs them per vertical on every PR to `main` and on pushes to `main`.
+- Before opening a PR, lint and tests must pass in the affected vertical (e.g. `cd training`): `uv run ruff check .` and `uv run pytest` (with `UV_PROJECT_ENVIRONMENT` set — see Environments). CI (`.github/workflows/ci.yml`) runs them on every PR to `main` and on pushes to `main`, for each vertical the change touches. `training` is a required check; it reports as skipped (which counts as passing) when a PR doesn't touch `training/`.
 - Branch names: `feat/<thing>`, `fix/<thing>`. One vertical per branch where possible.
 - Commit messages follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/#specification): `<type>(<scope>): <description>`, imperative, lowercase, no trailing period. Types: `feat`, `fix`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`. Scope is the vertical or shared area it touches: `training`, `hardware`, `runtime`, `shared`; omit it for repo-wide changes. Anything that changes a contract in `shared/` is a breaking change: add `!` after the scope and a `BREAKING CHANGE:` footer saying which artifacts it invalidates.
 - Never commit data, checkpoints, ARPA files, bitstreams, or venvs. `.gitignore` covers them; if you add a new artifact type, add it there.
