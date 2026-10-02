@@ -8,7 +8,7 @@ Team: Kai Asaoka, Sudharshan Kannan, Andrew Du, Anubhav Saini.
 
 ## What it does
 
-A person speaks into a microphone and the KV260 turns the audio into text in real time. A browser page shows the live transcript along with latency and power. Everything between the mic and the browser runs on the board: feature extraction and beam search on the ARM cores, the 6-bit-quantized LSTM acoustic model (and character LM) on the FPGA fabric. The goal is to match the reference paper's result, about 8.79% word error rate at roughly 10 W, faster than real time.
+A person speaks into a microphone and the KV260 turns the audio into text in real time. A browser page shows the live transcript along with latency and power. Everything between the mic and the browser runs on the board: feature extraction and beam search on the ARM cores, the 6-bit-quantized LSTM acoustic model (and character LM) on the FPGA fabric. The goal is to match the system the paper actually ran on its FPGA: the small model (3x256 acoustic LSTM, 2x256 char-LM) with 6-bit weights, which scored 14.02% word error rate at 9.24 W and 4.12x real time. The paper's 8.79% headline comes from a larger floating-point model on a GPU that doesn't fit this board.
 
 ## How it fits together
 
@@ -23,12 +23,19 @@ on board (KV260)
   mic -> features -> [fabric: acoustic model + char-LM] -> beam search + word-LM -> live transcript
 ```
 
+## Roadmap
+
+The live, real-time system above is the end goal. We get there in two stages:
+
+- **Term 1 (September to January): the RNN running on the fabric, offline.** The hardware runs the trained LSTM on our test data, fed in statically from audio files. In effect it's `model.score()` on audio files, with the FPGA fabric doing the RNN math instead of the GPU. No live audio yet.
+- **Term 2 (January to April): real-time processing.** Streaming audio from the microphone through the same model, and building out the live pipeline described in "What it does".
+
 ## Repository layout
 
-- `hardware/`: the FPGA design. Verilog RTL for the LSTM accelerator (PE array, LUT-based sigmoid/tanh, weight BRAM, FSM control) plus testbenches.
-- `training/`: the offline pipeline (Python). Data prep, feature extraction, acoustic-model and language-model training, quantization-aware training, and export to QONNX.
-- `runtime/`: the on-board program that runs the live demo on the KV260's ARM cores under PYNQ Linux.
-- `shared/`: specifications and reference vectors used across the project (feature format, vocabulary, quantization scheme, bit-exact test vectors).
+- `hardware/`: Verilog RTL for the LSTM accelerator. In progress; several modules are still empty stubs.
+- `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, and the LSTM + CTC acoustic model, trained from `training/notebooks/am_training.ipynb` on Colab.
+- `runtime/`: the on-board program for the KV260. Not started; the real-time part is the term 2 goal.
+- `shared/`: frozen cross-vertical specs and golden vectors. Nothing frozen yet.
 
 ## Getting the code
 

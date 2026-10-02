@@ -1,7 +1,5 @@
 `timescale 1ns / 1ps
 
-`timescale 1ns / 1ps
-
 //=====================================================================
 // Module: context_memory.v
 // Description:
@@ -27,7 +25,7 @@
 module context_memory #(
     parameter STATE_WIDTH = 24,
     parameter DEPTH = 66304,
-    parameter ADDR_WIDTH = $clog(DEPTH)
+    parameter ADDR_WIDTH = $clog2(DEPTH)
 ) (
     input wire clk,
     input wire write_enable,

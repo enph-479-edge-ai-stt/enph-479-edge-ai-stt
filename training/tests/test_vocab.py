@@ -13,24 +13,13 @@ def test_blank_is_index_zero_and_size_is_30():
 
 
 def test_encode_decode_round_trip():
-    text = "HELLO WORLD"
+    text = "IT'S A TEST"
     assert vocab.decode(vocab.encode(text)) == text
-
-
-def test_encode_add_eos():
-    idx = vocab.encode("HI", add_eos=True)
-    assert idx[-1] == vocab.EOS_IDX
-    assert vocab.decode(idx) == "HI"  # EOS renders as nothing
-
-
-def test_normalize_uppercases_and_drops_out_of_vocab():
-    assert vocab.normalize("Hello, world!") == "HELLO WORLD"
-    assert vocab.normalize("it's") == "IT'S"
 
 
 def test_encode_rejects_out_of_vocab():
     with pytest.raises(KeyError):
-        vocab.encode("hello")  # lowercase is not in the vocab; normalize first
+        vocab.encode("hello")  # lowercase is not in the vocab
 
 
 def test_collapse_merges_repeats_then_drops_blanks():

@@ -1,5 +1,25 @@
 `timescale 1ps / 1ps
 
+//=====================================================================
+// Module: tanh_lut.v
+// Description:
+//  Combinational tanh activation lookup table. Maps a quantized index
+//  to a signed 8-bit tanh value, so the datapath never needs a real
+//  tanh. LUT_PRECISION entries cover the input range symmetrically
+//  about zero: index LUT_PRECISION/2 is tanh(0) = 0, and the entries
+//  at either end saturate at -127 / +127. Purely combinational, so the
+//  result is available in the same cycle as the index.
+//
+// Parameters:
+//  LUT_BIT_WIDTH       - bit width of a stored LUT entry (signed)
+//  LUT_PRECISION       - number of LUT entries, must be 2**INPUT_BIT_WIDTH
+//  INPUT_BIT_WIDTH     - bit width of the index port
+//  TANH_OUTPUT_WIDTH   - bit width of the output value (signed)
+// Ports:
+//  index           - quantized input, selects the LUT entry
+//  tanh_output     - signed tanh value for that entry
+//=====================================================================
+
 module tanh_lut #(
     parameter LUT_BIT_WIDTH = 8,
     parameter LUT_PRECISION = 16,

@@ -12,6 +12,7 @@ env/
 # --- ML data & artifacts (kept on Drive / built locally, not git) ---
 # anchored to repo root so it does not match the training/data/ source package
 /data/
+/training/data/
 /datasets/
 *.npy
 *.tar
@@ -29,12 +30,16 @@ wandb/
 *.arpa.gz
 *.klm
 
-# --- FPGA build junk (the submodule also has its own .gitignore) ---
+# --- FPGA build junk ---
 *.bit
 *.xsa
 *.jou
 *.log
 .Xil/
+
+# --- RTL simulation output (iverilog / vvp / GTKWave) ---
+*.vcd
+*.vvp
 
 # --- Frontend ---
 node_modules/
