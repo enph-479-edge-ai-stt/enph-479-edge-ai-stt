@@ -115,3 +115,20 @@ def test_train_runs_end_to_end_on_tiny_data(tmp_path):
     model = train(cfg, datasets, tmp_path / "train.log")
     assert isinstance(model, AcousticModel)
     assert "[epoch 0]" in (tmp_path / "train.log").read_text(encoding="utf-8")
+
+
+def test_train_with_weight_bits_returns_quantized_weights(tmp_path):
+    items = list_utterances(_write_subset(tmp_path))
+    mean, std = compute_cmvn_over(items)
+    cfg = TrainConfig(
+        n_hidden=16, n_layers=1, batch_size=2, epochs=1, num_workers=0, device="cpu", weight_bits=6
+    )
+    datasets = {
+        "train": [LibriSpeechFeatures(items, mean, std)],
+        "test": [LibriSpeechFeatures(items[:2], mean, std)],
+    }
+    init_state = AcousticModel(n_hidden=16, n_layers=1).state_dict()
+    model = train(cfg, datasets, tmp_path / "train.log", init_state)
+    for name, w in model.named_parameters():
+        if "weight" in name:  # 6 bits: integers in [-31, 31] times one step per matrix
+            assert w.unique().numel() <= 63, name
