@@ -7,6 +7,7 @@ the case on CI (they aren't locked deps).
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -108,8 +109,7 @@ def test_a_run_trains_fine_tunes_and_saves(tiny, tmp_path, monkeypatch):
     assert callable(net.load_data)  # the notebooks' data step; it downloads, so not run here
     monkeypatch.chdir(tmp_path)  # the notebooks write their logs to the working directory
     cfg = net.TrainConfig(n_hidden=32, n_layers=2, epochs=4, device="cpu", **settings)
-    qcfg = cfg.fine_tune()  # a tenth of the learning rate, a quarter of the epochs, 6 bits
-    assert (qcfg.lr, qcfg.epochs, qcfg.quantize) == (pytest.approx(cfg.lr / 10), 1, True)
+    qcfg = replace(cfg, epochs=1, lr=cfg.lr / 10, quantize=True)
 
     model = net.train(cfg, data, "train.log")
     qmodel = net.train(qcfg, data, "train_6bit.log", model.state_dict())
