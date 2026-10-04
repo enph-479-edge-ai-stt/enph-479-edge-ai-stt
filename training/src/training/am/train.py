@@ -4,6 +4,7 @@ Runs start to finish in one session: logs greedy test CER after every epoch (to 
 notebook output and a log file) and returns the trained model. With ``weight_bits``
 set it fine-tunes a trained model with its weights quantized, the paper's "retraining
 based fixed-point optimization" (weights only; activations and the cell stay float).
+The weights land on the FPGA's fixed-point grid, so ``am/export.py`` can pack the result.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from training import vocab
 from training.am.dataset import collate
+from training.am.export import LSTM_FRAC, PROJ_FRAC
 from training.am.model import AcousticModel
 
 
@@ -58,27 +60,20 @@ def _log(log_path: Path, msg: str) -> None:
         f.write(msg + "\n")
 
 
-def _weight_steps(model: AcousticModel, qmax: int) -> dict[str, torch.Tensor]:
-    """Per weight matrix, the step size minimizing the squared quantization error.
+def _weight_steps(model: AcousticModel) -> dict[str, float]:
+    """Per weight matrix, its step size on the FPGA (the fixed-point formats in ``export``).
 
-    The paper's rule (Shin et al. 2016, eq. 2): alternately round the weights to integers
-    in ``[-qmax, qmax]`` at the current step, then refit the step to those integers.
+    Powers of two, and the same for a layer's input and hidden weights: the fabric sums
+    both products in one accumulator and rescales with a shift.
     """
-    steps = {}
-    for name, w in model.named_parameters():
-        if "weight" in name:
-            w = w.detach()
-            step = w.abs().max() / qmax
-            for _ in range(20):
-                z = torch.clamp(torch.round(w / step), -qmax, qmax)
-                step = (w * z).sum() / (z * z).sum()
-            steps[name] = step
-    return steps
+    return {
+        name: 2.0 ** -(PROJ_FRAC if name.startswith("proj") else LSTM_FRAC)
+        for name, _ in model.named_parameters()
+        if "weight" in name
+    }
 
 
-def _quantize(
-    model: AcousticModel, steps: dict[str, torch.Tensor], qmax: int
-) -> dict[str, torch.Tensor]:
+def _quantize(model: AcousticModel, steps: dict[str, float], qmax: int) -> dict[str, torch.Tensor]:
     """Swap each weight in ``steps`` for its quantized value; return the float originals."""
     params = dict(model.named_parameters())
     floats = {}
@@ -131,7 +126,7 @@ def train(
     # weight_bits unset, steps is empty and none of this touches the model.
     params = dict(model.named_parameters())
     qmax = 2 ** (cfg.weight_bits - 1) - 1 if cfg.weight_bits else 0
-    steps = _weight_steps(model, qmax) if cfg.weight_bits else {}
+    steps = _weight_steps(model) if cfg.weight_bits else {}
     floats = _quantize(model, steps, qmax)
 
     n_batches = len(train_loader)

@@ -12,14 +12,18 @@ A person speaks into a microphone and the KV260 turns the audio into text in rea
 
 ## How it fits together
 
-An offline pipeline trains the models on a GPU and compiles them into an FPGA bitstream; the on-board runtime then runs that bitstream live, streaming audio in and text out.
+Two things are built offline. The accelerator is hand-written RTL, built into an FPGA bitstream with Vivado. The models are trained on a GPU, and the acoustic model's weights are quantized to 6 bits and packed into a weight image. On the board, the runtime loads the bitstream, streams the weight image into the accelerator's memory, and then runs it live, audio in and text out.
 
 ```
 offline (PC + GPU)
-  audio -> features -> LSTM + CTC training -> quantization (QAT) -> QONNX export -> bitstream (Vivado)
+  audio -> features -> LSTM + CTC training -> 6-bit fine-tune -> weight image for the fabric
   text  -> char-LM (LSTM) and word-LM (KenLM trigram)
 
+offline (Vivado)
+  hand-written RTL -> bitstream
+
 on board (KV260)
+  load bitstream + weight image
   mic -> features -> [fabric: acoustic model + char-LM] -> beam search + word-LM -> live transcript
 ```
 
@@ -32,10 +36,10 @@ The live, real-time system above is the end goal. We get there in two stages:
 
 ## Repository layout
 
-- `hardware/`: Verilog RTL for the LSTM accelerator. In progress; several modules are still empty stubs.
-- `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, and the LSTM + CTC acoustic model, trained from `training/notebooks/am_training.ipynb` on Colab.
+- `hardware/`: hand-written RTL for the LSTM accelerator. In progress; several modules are still empty stubs.
+- `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, the LSTM + CTC acoustic model, its 6-bit weight fine-tune and the weight-image export, all run from `training/notebooks/am_training.ipynb` on Colab, plus the character LM (`cm_training.ipynb`).
 - `runtime/`: the on-board program for the KV260. Not started; the real-time part is the term 2 goal.
-- `shared/`: frozen cross-vertical specs and golden vectors. Nothing frozen yet.
+- `shared/`: cross-vertical specs and golden vectors. So far: the weight image layout (`shared/specs/am_weight_image.md`).
 
 ## Getting the code
 
