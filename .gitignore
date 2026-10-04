@@ -22,8 +22,8 @@ checkpoints/
 *.ckpt
 *.pt
 *.pth
-am_fabric.mem
-am_fabric.json
+*_fabric.mem
+*_fabric.json
 wandb/
 
 # language models

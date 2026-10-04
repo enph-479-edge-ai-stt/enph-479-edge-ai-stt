@@ -1,14 +1,19 @@
 # training/
 
-The offline pipeline (Python). Today it trains the acoustic model (AM) and the character model (CM) on Colab.
+The offline pipeline (Python). Today it trains the acoustic model (AM) and the character model (CM) on Colab, fine-tunes each with 6-bit weights, and packs the result for the FPGA.
 
 - `notebooks/am_training.ipynb`: the AM Colab launcher (download, CMVN, train, fine-tune with 6-bit weights, save both models, the logs and the FPGA weight image to Drive).
-- `notebooks/cm_training.ipynb`: the CM Colab launcher (download, sample the LM text, train, save to Drive).
+- `notebooks/cm_training.ipynb`: the CM Colab launcher (download, sample the LM text, train, fine-tune with 6-bit weights, save both models, the logs and the FPGA weight image to Drive).
 - `src/training/data/librispeech.py`: LibriSpeech audio and LM-text download (wget, md5 check, extract).
 - `src/training/features/fbank.py`: 123-dim log-mel filterbank features and CMVN (provisional spec).
 - `src/training/vocab.py`: 30-symbol character vocab (provisional).
-- `src/training/am/`: the LSTM + CTC model, the dataset, and the training loop, which can also fine-tune a trained model with its weights quantized (6 bits, on the FPGA's fixed-point grid; weights only).
-- `src/training/am/export.py`: packs the 6-bit model into the weight image the FPGA loads, `am_fabric.mem` (the weight memory's contents) and `am_fabric.json` (CMVN and scales for the ARM). The layout is specified in `shared/specs/am_weight_image.md`.
-- `src/training/cm/`: the character model, the paper's char-LM (one-hot in, 2x256 LSTM), the EOS-joined text stream, and the truncated-BPTT training loop.
+- `src/training/lstm/`: everything the two models share. Both are a stack of LSTM layers with a linear output layer, so there is one of each of these:
+  - `model.py`: the network (`LstmNet`).
+  - `train.py`: the training loop, including the fine-tune with the weights quantized (6 bits, on the FPGA's fixed-point grid; weights only).
+  - `export.py`: packs a 6-bit model into the weight image the FPGA loads, `<name>_fabric.mem` (the weight memory's contents) and `<name>_fabric.json` (dimensions and scales for the ARM). The layout is specified in `shared/specs/weight_image.md`. Also `save_run`, the one definition of what a run leaves on Drive: both checkpoints, both logs and the image.
+- `src/training/am/`: what is the AM's own. Feature input with padding, the dataset, the CTC loss and greedy CER.
+- `src/training/cm/`: what is the CM's own (the paper's char-LM). One-hot input with carried state, the EOS-joined text stream, truncated-BPTT batching, bits per character and sampling.
 
-The later stages (word-LM, decoding, activation and cell quantization, the integer reference model, char-LM export) haven't started.
+A new LSTM model goes the same way: subclass `LstmNet`, hand `lstm.train.fit` its losses and its evaluation, and `export` works on it as is.
+
+The later stages (word-LM, decoding, activation and cell quantization, the integer reference model) haven't started.

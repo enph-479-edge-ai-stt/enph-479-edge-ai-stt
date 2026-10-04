@@ -17,7 +17,7 @@ The repo is split by the three things that get built, each with its own toolchai
 
 | Vertical | Folder | Runs on | Produces |
 |---|---|---|---|
-| 1. Training data + ML | `training/` | Google Colab (GPU) / any PC | Quantized weights, packed as a weight image for the fabric (`am_fabric.mem` + `am_fabric.json`) |
+| 1. Training data + ML | `training/` | Google Colab (GPU) / any PC | Quantized weights, packed as weight images for the fabric (`am_fabric.mem` + `am_fabric.json`, and `cm_fabric.*` for the char-LM) |
 | 2. Hardware + flashing to FPGA | `hardware/` | Local Linux box with Vivado | Bitstream (`.bit` + `.hwh`) |
 | 3. Runtime on the SoM Linux | `runtime/` | KV260 ARM cores, Ubuntu + PYNQ | The live mic-to-browser demo |
 
@@ -28,14 +28,14 @@ The repo is split by the three things that get built, each with its own toolchai
 ```
 offline (PC + GPU)
   audio -> features -> LSTM+CTC training -> 6-bit fine-tune -> weight image (am_fabric.mem)
-  text  -> char-LM (LSTM)
+  text  -> char-LM (LSTM) training   -> 6-bit fine-tune -> weight image (cm_fabric.mem)
   text  -> word-LM (KenLM trigram)
 
 offline (Vivado)
   hand-written RTL -> bitstream (.bit + .hwh)
 
 on board (KV260)
-  load the bitstream -> stream the weight image into the fabric's weight memory
+  load the bitstream -> stream the weight images into the fabric's weight memory
   USB mic -> numpy features -> [fabric: AM + char-LM] -> beam search + word-LM -> websocket -> browser
 ```
 
@@ -45,12 +45,13 @@ The model is not compiled into the bitstream. The bitstream is the accelerator; 
 
 Python package. Notebooks in `training/notebooks/` are thin launchers only; real code lives in modules so Colab sessions are disposable (clone, run, die).
 
-What exists: `data` (LibriSpeech audio + LM-text download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `am` (LSTM + CTC model, dataset, training loop, a fine-tune of the trained model with 6-bit weights on the fabric's fixed-point grid, and `export`, which packs that model into the weight image), `cm` (character model, the paper's char-LM: one-hot in, LSTM, truncated BPTT over an EOS-joined stream of LM-text sentences, Adam), and two notebooks, `training/notebooks/am_training.ipynb` and `cm_training.ipynb`. Later stages (word-LM, decode, activation and cell quantization, the integer reference model, char-LM export) haven't started; don't scaffold them before they do.
+What exists: `data` (LibriSpeech audio + LM-text download), `features` (123-dim log-mel filterbank + CMVN, computed on the fly), `vocab`, `lstm` (what the two models share: the network, the training loop with its fine-tune on 6-bit weights at the fabric's fixed-point grid, and `export`, which packs a 6-bit model into the weight image), `am` (the acoustic model's own parts: feature input, dataset, CTC loss, greedy CER), `cm` (the character model's own parts, the paper's char-LM: one-hot in, truncated BPTT over an EOS-joined stream of LM-text sentences, bits per character), and two notebooks, `training/notebooks/am_training.ipynb` and `cm_training.ipynb`. Later stages (word-LM, decode, activation and cell quantization, the integer reference model) haven't started; don't scaffold them before they do.
 
+- **One LSTM pipeline.** The AM and the CM are the same kind of network (LSTM stack + linear output layer), so the network class, the training loop, the quantized fine-tune and the export exist once, in `training/src/training/lstm/`. `am/` and `cm/` hold only what differs: how inputs are fed, the loss, and the evaluation. Don't copy pipeline code into a model's folder; if both models need it, it goes in `lstm/`.
 - Data: LibriSpeech from OpenSLR 12. Train on `train-clean-100`, tune on `dev-clean`, touch `test-clean` once. The char-LM trains on a random sample of the normalized LibriSpeech LM text (OpenSLR 11, dev/test books excluded) and is scored in bits per character on the dev-clean transcripts.
-- Colab: code in GitHub; each run downloads audio to `/content` scratch and trains start to finish in one session (no checkpoints, no resume), then saves the final weights + CMVN (`am.pt`, and `am_6bit.pt` from the 6-bit fine-tune), the training logs and the 6-bit model's weight image (`am_fabric.mem`, `am_fabric.json`) to a timestamped run folder on Google Drive.
+- Colab: code in GitHub; each run downloads audio to `/content` scratch and trains start to finish in one session (no checkpoints, no resume), then saves the final weights (`am.pt` with its CMVN, and `am_6bit.pt` from the 6-bit fine-tune; `cm.pt` and `cm_6bit.pt` for the char-LM), the training logs and the 6-bit model's weight image (`am_fabric.mem` + `am_fabric.json`, or `cm_fabric.*`) to a timestamped run folder on Google Drive.
 - Quantization is done by hand on the standard `nn.LSTM`: the fine-tune rounds the weights to the fabric's fixed-point grid every step. No quantization library.
-- The weight image's layout and number formats are a contract with `hardware/` and `runtime/`: `shared/specs/am_weight_image.md`. `am/export.py` and that spec change together.
+- The weight image's layout and number formats are a contract with `hardware/` and `runtime/`: `shared/specs/weight_image.md`. `lstm/export.py` and that spec change together.
 - Stack: PyTorch, torchaudio transforms, soundfile for FLAC I/O, jiwer.
 - Keep it lean: build the one path the notebook runs. No fallbacks, no options nothing uses, no code for stages that haven't started.
 - The feature pipeline here is the reference the runtime numpy code must bit-match.
@@ -62,7 +63,7 @@ The LSTM accelerator, written by hand in RTL and built into a bitstream with Viv
 - RTL lives in-repo under `hardware/rtl/`. Hand-written, modelled on the paper's LSTM tile: `pe_unit` (8b x 6b MAC, 24b accumulator), `pe_array`, `pe_buffer` (i/f/o/c gate results), `lstm_epu`, `weight_bram` (packed rows, 6b weights), `sigmoid_lut` / `tanh_lut`, `fsm_controller`, `output_tile`, `sr_accelerator_top`. Several files are still empty stubs. Testbenches in `hardware/testbenches/`.
 - The fabric's arithmetic is the reference. The bitstream must match an integer model of that arithmetic bit-for-bit (gate V3 below). That model is not written yet.
 - Build machine: Vivado on Linux, ~32 GB RAM, 100+ GB disk. Never on Colab, never on the board. Build outputs (`.bit`, `.xsa`, `.jou`, `.log`, `.Xil/`) are gitignored.
-- Weight loading: the weights are written in at startup, not baked into the bitstream. They need UltraRAM (the AM alone is 8.7 Mb at 6 bits, more than all the block RAM), and UltraRAM on this chip powers up as zeros with no bitstream init. After `Overlay()`, the ARM streams the weight image in over AXI-DMA. Swapping checkpoints needs no rebuild. The layout the memory and the controller have to follow is `shared/specs/am_weight_image.md`; the UltraRAM memory and the loader are not written yet.
+- Weight loading: the weights are written in at startup, not baked into the bitstream. They need UltraRAM (the AM alone is 8.7 Mb at 6 bits, more than all the block RAM), and UltraRAM on this chip powers up as zeros with no bitstream init. After `Overlay()`, the ARM streams the weight images in over AXI-DMA. Swapping checkpoints needs no rebuild. The layout the memory and the controller have to follow is `shared/specs/weight_image.md`; the UltraRAM memory and the loader are not written yet.
 
 ### 3. `runtime/` (SoM Linux program)
 
@@ -89,7 +90,7 @@ Board and chip facts below were checked against the AMD K26 product brief and th
 
 **Flash and boot path.** Boot firmware (FSBL, PMU firmware, U-Boot) lives in QSPI on the SOM itself. The microSD carries Ubuntu 22.04 for Kria; Kria-PYNQ is installed on top (`sudo bash install.sh -b KV260`, JupyterLab on port 9090). The fabric is programmed from Linux, not over JTAG: `pynq.Overlay("design.bit")` calls the kernel FPGA Manager. PYNQ needs the `.bit` and the matching `.hwh` together, always scp both. AMD's `xmutil` is the alternative loader.
 
-**Day-to-day loop:** build on the Linux box -> scp `.bit` + `.hwh` (and the run's `am_fabric.mem` + `am_fabric.json`) to the board -> ssh or Jupyter -> `Overlay()` -> stream the weight image in over AXI-DMA -> stream frames -> read probabilities -> decode on ARM.
+**Day-to-day loop:** build on the Linux box -> scp `.bit` + `.hwh` (and the runs' `am_fabric.*` and `cm_fabric.*`) to the board -> ssh or Jupyter -> `Overlay()` -> stream the weight images in over AXI-DMA -> stream frames -> read probabilities -> decode on ARM.
 
 **Reference paper hardware, for comparison** (from the PDF): Xilinx XC7Z045 on a ZC706, 2.18 MB on-chip memory, 512 PEs (two arrays of 256) at 100 MHz, ARM at 800 MHz running the N-best search. 6-bit weights, 8-bit signals, 16-bit LSTM cells. Peephole LSTM. The FPGA ran the small model (3x256 AM, 2x256 char-LM, 6-bit weights, beam 128) at 9.24 W and 4.12x real time, scoring 14.02% WER / 6.02% CER on WSJ eval92. That is this project's target. The headline 8.79% WER / 3.90% CER is the large model (4x512 AM, 2x512 char-LM, 15.1M params) in floating point on a GPU; at ~90 Mb of 6-bit weights it doesn't fit the KV260's 26.6 Mb on-chip either. Power will not be apples-to-apples (28 nm vs 16 nm); frame it as a reproduction on a current platform.
 
@@ -99,8 +100,8 @@ The verification gates are bit-exact contracts that cross folder boundaries. Kee
 
 - **Features:** 16 kHz mono, 25 ms Hamming window, 10 ms hop, 40 log-mel + energy + delta + double-delta = 123 dims, normalized on training-set statistics, quantized to int8 at the fabric boundary. 100 frames/s. Pin the exact CMVN recipe in `shared/specs/` before anything downstream bakes it in.
 - **Vocabulary:** provisional 30 symbols (26 letters, space, apostrophe, end-of-sentence, CTC blank at index 0; LibriSpeech has no other punctuation), in `training/src/training/vocab.py`. Fixed integer mapping once frozen; changing it invalidates every trained artifact.
-- **Quantization:** 6-bit weights, 8-bit activations, 16-bit cell state. The weight, bias, feature and hidden-state formats are in `shared/specs/am_weight_image.md`; the cell and activation-table formats are not specified yet.
-- **Weight image:** `am_fabric.mem` + `am_fabric.json`, written by training, loaded by the runtime, read by the RTL. Layout in `shared/specs/am_weight_image.md` (provisional until the RTL that reads it exists).
+- **Quantization:** 6-bit weights, 8-bit activations, 16-bit cell state. The weight, bias, input and hidden-state formats are in `shared/specs/weight_image.md`; the cell and activation-table formats are not specified yet.
+- **Weight images:** `am_fabric.mem` + `am_fabric.json` and `cm_fabric.mem` + `cm_fabric.json`, written by training, loaded by the runtime, read by the RTL. One format for both models, in `shared/specs/weight_image.md` (provisional until the RTL that reads it exists).
 - **Fabric interface:** 123 x int8 in per frame, one int8 per vocab symbol out per frame, over AXI-DMA. Char-LM control (char + context id) over MMIO.
 - **Golden vectors:** audio -> features, and the outputs of the integer model of the fabric's arithmetic. The board must match the integer model bit-for-bit.
 
@@ -128,8 +129,8 @@ Gates: V1 greedy CER during float training; V2 CER/WER holds after quantization;
 ## Current state (2026-10-03)
 
 - **Decided: hand RTL is the bitstream path.** There is no model compiler in the flow. Training hands the hardware a weight image, and the bit-exact reference for the board is our own integer model.
-- `training/`: download, features, vocab, the AM training loop, the 6-bit weight fine-tune and the weight-image export exist, run from `am_training.ipynb` on Colab (T4). The char-LM trains from `cm_training.ipynb`. The first full float AM run reached 0.20 greedy dev CER and was still improving (constant learning rate, 20 epochs). The AM tests skip on CI because torch isn't a locked dependency, so CI only covers vocab, download and notebook structure.
+- `training/`: download, features, vocab, one shared LSTM pipeline (network, training loop, 6-bit weight fine-tune, weight-image export) with the AM and the char-LM on top of it, run from `am_training.ipynb` and `cm_training.ipynb` on Colab (T4). The char-LM's fine-tune and export have not been run on Colab yet. The first full float AM run reached 0.20 greedy dev CER and was still improving (constant learning rate, 20 epochs). The AM tests skip on CI because torch isn't a locked dependency, so CI only covers vocab, download and notebook structure.
 - `hardware/`: `pe_unit`, `pe_array`, `pe_buffer`, `lstm_epu`, `weight_bram`, `context_memory` and the two LUTs have content, with testbenches for all but `pe_buffer`. `lstm_tile`, `output_tile`, `fsm_controller` and `sr_accelerator_top` are empty. Not yet in line with the weight image spec: `weight_bram` infers block RAM and is sized for one matrix, `pe_array` defaults its accumulator and bias to 16 bits (the spec needs 24), `lstm_epu` still has a peephole path and placeholder bit slices, and the LUTs are 16-entry tables. There is no loader.
 - `shared/`: the weight image spec (provisional). `runtime/` is a README only.
 - Not written yet, and needed before gate V3: the integer model of the fabric's arithmetic (8-bit h, 16-bit cell, activation tables).
-- Open decisions: sign-off from the hardware side on the weight image's memory map; the cell and activation-table formats; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.
+- Open decisions: sign-off from the hardware side on the weight image's memory map; where the char-LM's rows go on-chip (the two images together are 4962 rows, more than one UltraRAM depth); the cell and activation-table formats; GPU compute source; whether sysfs power telemetry is good enough for the report or an external meter is needed.

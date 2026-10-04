@@ -1,23 +1,24 @@
 """Acoustic model: stacked unidirectional LSTM -> linear -> log-softmax.
 
-Fixed by the hardware: unidirectional (streaming inference can't see the future),
-3 x 256 for the deployable small model, no peepholes (``nn.LSTM`` has none).
-Input is the 123-dim feature vector; output is the vocab size (CTC blank
-included), as per-frame log-probabilities for ``nn.CTCLoss``.
+The network is the shared ``LstmNet``, 3 x 256 for the deployable small model. Input is
+the 123-dim feature vector; output is the vocab size (CTC blank included), as per-frame
+log-probabilities for ``nn.CTCLoss``.
 """
 
 from __future__ import annotations
 
 import torch
-from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from training.features.fbank import FEATURE_DIM
+from training.lstm.model import LstmNet
 from training.vocab import VOCAB_SIZE
 
 
-class AcousticModel(nn.Module):
+class AcousticModel(LstmNet):
     """Deep unidirectional LSTM acoustic model with a CTC output head."""
+
+    x_frac = 5  # CMVN'd features reach about +-4, so the fabric gets them as int8 / 32
 
     def __init__(
         self,
@@ -28,16 +29,7 @@ class AcousticModel(nn.Module):
         dropout: float = 0.2,
     ) -> None:
         """Build the LSTM stack and the linear projection to ``n_out`` logits."""
-        super().__init__()
-        self.lstm = nn.LSTM(
-            input_size=n_feats,
-            hidden_size=n_hidden,
-            num_layers=n_layers,
-            batch_first=True,
-            bidirectional=False,
-            dropout=dropout if n_layers > 1 else 0.0,  # nn.LSTM warns on 1 layer
-        )
-        self.proj = nn.Linear(n_hidden, n_out)
+        super().__init__(n_feats, n_hidden, n_layers, n_out, dropout)
 
     def forward(self, feats: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
         """Map padded feature frames to per-frame log-probabilities.

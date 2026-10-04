@@ -23,6 +23,7 @@ from training.cm.train import (  # noqa: E402
     bits_per_char,
     train,
 )
+from training.lstm.export import export  # noqa: E402
 
 SENTENCES = ["HELLO WORLD", "THE CAT SAT", "IT'S FINE", "A DOG RAN HOME"]
 
@@ -114,3 +115,17 @@ def test_train_runs_end_to_end_on_tiny_data(tmp_path):
     log = (tmp_path / "train.log").read_text(encoding="utf-8")
     assert "[epoch 0]" in log
     assert "sample:" in log
+
+
+def test_train_with_weight_bits_returns_quantized_weights(tmp_path):
+    streams = {"train": to_stream(SENTENCES * 10), "test": to_stream(SENTENCES)}
+    cfg = TrainConfig(
+        n_hidden=32, n_layers=2, batch_size=2, bptt=10, epochs=1, device="cpu", weight_bits=6
+    )
+    init_state = CharModel(n_hidden=32, n_layers=2).state_dict()
+    model = train(cfg, streams, tmp_path / "train.log", init_state)
+    for name, w in model.named_parameters():
+        if "weight" in name:  # 6 bits: integers in [-31, 31] times one step per matrix
+            assert w.unique().numel() <= 63, name
+    export(model, tmp_path, "cm")  # on the FPGA's grid, so it packs
+    assert (tmp_path / "cm_fabric.mem").exists()
