@@ -1,7 +1,9 @@
 """CTC training loop for the acoustic model.
 
 Runs start to finish in one session: logs greedy test CER after every epoch (to the
-notebook output and a log file) and returns the trained model.
+notebook output and a log file) and returns the trained model. With ``weight_bits``
+set it fine-tunes a trained model with its weights quantized, the paper's "retraining
+based fixed-point optimization" (weights only; activations and the cell stay float).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ class TrainConfig:
     grad_clip: float = 5.0
     batch_size: int = 32
     epochs: int = 20
+    weight_bits: int | None = None  # quantize the weights to this many bits (fine-tuning)
     num_workers: int = 2
     log_every: int = 50  # batches between progress lines
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
@@ -55,14 +58,53 @@ def _log(log_path: Path, msg: str) -> None:
         f.write(msg + "\n")
 
 
+def _weight_steps(model: AcousticModel, qmax: int) -> dict[str, torch.Tensor]:
+    """Per weight matrix, the step size minimizing the squared quantization error.
+
+    The paper's rule (Shin et al. 2016, eq. 2): alternately round the weights to integers
+    in ``[-qmax, qmax]`` at the current step, then refit the step to those integers.
+    """
+    steps = {}
+    for name, w in model.named_parameters():
+        if "weight" in name:
+            w = w.detach()
+            step = w.abs().max() / qmax
+            for _ in range(20):
+                z = torch.clamp(torch.round(w / step), -qmax, qmax)
+                step = (w * z).sum() / (z * z).sum()
+            steps[name] = step
+    return steps
+
+
+def _quantize(
+    model: AcousticModel, steps: dict[str, torch.Tensor], qmax: int
+) -> dict[str, torch.Tensor]:
+    """Swap each weight in ``steps`` for its quantized value; return the float originals."""
+    params = dict(model.named_parameters())
+    floats = {}
+    with torch.no_grad():
+        for name, step in steps.items():
+            floats[name] = params[name].clone()
+            params[name].copy_(torch.clamp(torch.round(params[name] / step), -qmax, qmax) * step)
+    return floats
+
+
 def train(
-    cfg: TrainConfig, datasets: dict[str, list[Dataset]], log_path: str | Path
+    cfg: TrainConfig,
+    datasets: dict[str, list[Dataset]],
+    log_path: str | Path,
+    init_state: dict[str, torch.Tensor] | None = None,
 ) -> AcousticModel:
     """Train on all of ``datasets["train"]``; after each epoch, log CER on all of ``"test"``.
 
     Each role is a list of datasets in any format, pooled together. A dataset only has to
     yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
     epoch lines are printed and written to ``log_path`` (overwritten). Returns the model.
+
+    ``init_state`` is a state dict to start from instead of a random init. With
+    ``cfg.weight_bits`` set (which needs a trained ``init_state``), every forward and
+    backward pass runs on quantized weights, so the logged CER and the returned model are
+    the quantized model's.
     """
     log_path = Path(log_path)
     log_path.write_text("", encoding="utf-8")
@@ -78,9 +120,19 @@ def train(
     test_loader = DataLoader(ConcatDataset(datasets["test"]), **loader_kw)
 
     model = AcousticModel(n_hidden=cfg.n_hidden, n_layers=cfg.n_layers, dropout=cfg.dropout)
+    if init_state is not None:
+        model.load_state_dict(init_state)
     model.to(device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     ctc = nn.CTCLoss(blank=vocab.BLANK_IDX, zero_infinity=True)
+
+    # weight_bits=6 keeps each weight at step * an integer in [-31, 31]. The model holds
+    # the quantized weights; the float ones come back only for the optimizer update. With
+    # weight_bits unset, steps is empty and none of this touches the model.
+    params = dict(model.named_parameters())
+    qmax = 2 ** (cfg.weight_bits - 1) - 1 if cfg.weight_bits else 0
+    steps = _weight_steps(model, qmax) if cfg.weight_bits else {}
+    floats = _quantize(model, steps, qmax)
 
     n_batches = len(train_loader)
     for epoch in range(cfg.epochs):
@@ -94,7 +146,13 @@ def train(
             opt.zero_grad()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)  # LSTMs explode
+            # The gradient was taken at the quantized weights; apply it to the float ones
+            # (one update is much smaller than a quantization step), then re-quantize.
+            with torch.no_grad():
+                for name, w in floats.items():
+                    params[name].copy_(w)
             opt.step()
+            floats = _quantize(model, steps, qmax)
             loss_sum += loss.item()
             if b % cfg.log_every == 0:
                 s_per_batch = (time.perf_counter() - t0) / b
