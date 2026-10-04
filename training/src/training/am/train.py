@@ -75,7 +75,7 @@ def train(
     yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
     epoch lines are printed and written to ``log_path`` (overwritten). Returns the model.
 
-    ``init_state`` and ``cfg.weight_bits`` are the 6-bit fine-tune, see ``lstm.fit``.
+    ``init_state`` and ``cfg.quantize`` are the 6-bit fine-tune, see ``lstm.fit``.
     """
     device = torch.device(cfg.device)
     loader_kw = {

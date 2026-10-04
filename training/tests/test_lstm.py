@@ -43,7 +43,7 @@ def test_export_packs_the_model_by_the_memory_map(net, tmp_path):
     model = net(n_hidden=32, n_layers=2)
     with pytest.raises(ValueError, match="6-bit grid"):
         export(model, tmp_path, "net")
-    _quantize(model, _weight_steps(model), 31)  # what the 6-bit fine-tune leaves behind
+    _quantize(model, _weight_steps(model))  # what the 6-bit fine-tune leaves behind
     export(model, tmp_path, "net", note="kept")
 
     # Walk shared/specs/weight_image.md with its numbers written out. A row is PE array 0
@@ -78,7 +78,7 @@ def test_export_packs_the_model_by_the_memory_map(net, tmp_path):
     assert next(rows, None) is None
 
     manifest = json.loads((tmp_path / "net_fabric.json").read_text())
-    assert manifest["rows"] * manifest["words_per_row"] == len(words)
+    assert manifest["rows"] * 12 == len(words)
     assert manifest["n_in"] == model.lstm.input_size
     assert manifest["x_frac"] == model.x_frac
     assert manifest["note"] == "kept"
@@ -109,7 +109,7 @@ def test_a_run_trains_fine_tunes_and_saves(tiny, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # the notebooks write their logs to the working directory
     cfg = net.TrainConfig(n_hidden=32, n_layers=2, epochs=4, device="cpu", **settings)
     qcfg = cfg.fine_tune()  # a tenth of the learning rate, a quarter of the epochs, 6 bits
-    assert (qcfg.lr, qcfg.epochs, qcfg.weight_bits) == (pytest.approx(cfg.lr / 10), 1, 6)
+    assert (qcfg.lr, qcfg.epochs, qcfg.quantize) == (pytest.approx(cfg.lr / 10), 1, True)
 
     model = net.train(cfg, data, "train.log")
     qmodel = net.train(qcfg, data, "train_6bit.log", model.state_dict())

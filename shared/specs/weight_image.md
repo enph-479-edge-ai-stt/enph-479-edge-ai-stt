@@ -28,7 +28,7 @@ The weights are not part of the bitstream. They need UltraRAM (the AM alone is 8
 A gate's pre-activation is one accumulator: the bias is preloaded, then one product is added per input.
 
 - Every h-phase product, and every product in layers above the first, is h times a weight: 2^-7 x 2^-7 = 2^-14, no shift.
-- **Layer 0's x-phase products are shifted left before adding**, because its inputs are not at h's scale. The shift is 7 minus the input's fractional bits (`h_frac - x_frac` in the manifest):
+- **Layer 0's x-phase products are shifted left before adding**, because its inputs are not at h's scale. The shift is 7 minus the input's fractional bits (`x_frac` in the manifest):
   - AM: features at 2^-5, shift left 2.
   - CM: a one-hot 1 at 2^0, shift left 7. Only one input is nonzero, so the whole x-phase is one weight row shifted left 7.
 - Output layer: its inputs are the top layer's h, products at 2^-6 x 2^-7 = 2^-13, no shift.
@@ -98,8 +98,7 @@ Rows go in address order. Each row is 96 words, least significant word first, so
 
 - `n_in`, `n_hidden`, `n_layers`, `n_out`: the model's dimensions.
 - `x_frac`: the fractional bits of the model's inputs as the fabric gets them (5 for the AM, 0 for the CM).
-- `weight_bits`, `lstm_frac`, `proj_frac`, `h_frac`, `bias_bits`: the formats above, as the image was built.
-- `rows`, `words_per_row`: the image's size, for checking a load.
+- `rows`: the image's size, for checking a load.
 - AM only, `cmvn_mean` and `cmvn_std`: 123 values each. The model's inputs are `(features - mean) / std`, and the int8 sent to the fabric is that x 2^`x_frac`, rounded and clamped to -128..127.
 
 ## Not specified here yet

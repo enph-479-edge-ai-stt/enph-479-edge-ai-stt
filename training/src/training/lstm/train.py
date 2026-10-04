@@ -1,7 +1,7 @@
 """The training loop the acoustic and character models share.
 
 Runs start to finish in one session: logs progress and, after every epoch, the model's
-own evaluation (to the notebook output and a log file). With ``weight_bits`` set it
+own evaluation (to the notebook output and a log file). With ``quantize`` set it
 fine-tunes a trained model with its weights quantized, the paper's "retraining based
 fixed-point optimization" (weights only; activations and the cell stay float). The
 weights land on the FPGA's fixed-point grid, so ``lstm/export.py`` can pack the result.
@@ -17,7 +17,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from training.lstm.export import LSTM_FRAC, PROJ_FRAC
+from training.lstm.export import LSTM_FRAC, PROJ_FRAC, WEIGHT_BITS
 from training.lstm.model import LstmNet
 
 
@@ -31,7 +31,7 @@ class TrainConfig:
     grad_clip: float = 5.0
     batch_size: int = 32
     epochs: int = 20
-    weight_bits: int | None = None  # quantize the weights to this many bits (fine-tuning)
+    quantize: bool = False  # hold the weights on the FPGA's 6-bit grid (fine-tuning)
     log_every: int = 50  # batches between progress lines
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -42,7 +42,7 @@ class TrainConfig:
         """
         # Rounded so the log shows 3e-05, not 2.9999999999999997e-05.
         lr = round(self.lr / 10, 10)
-        return replace(self, lr=lr, epochs=max(1, self.epochs // 4), weight_bits=6)
+        return replace(self, lr=lr, epochs=max(1, self.epochs // 4), quantize=True)
 
 
 def _log(log_path: Path, msg: str) -> None:
@@ -64,8 +64,9 @@ def _weight_steps(model: LstmNet) -> dict[str, float]:
     }
 
 
-def _quantize(model: LstmNet, steps: dict[str, float], qmax: int) -> dict[str, torch.Tensor]:
+def _quantize(model: LstmNet, steps: dict[str, float]) -> dict[str, torch.Tensor]:
     """Swap each weight in ``steps`` for its quantized value; return the float originals."""
+    qmax = 2 ** (WEIGHT_BITS - 1) - 1
     params = dict(model.named_parameters())
     floats = {}
     with torch.no_grad():
@@ -93,7 +94,7 @@ def fit(
     the text logged after an epoch.
 
     ``init_state`` is a state dict to start from instead of the model's random init. With
-    ``cfg.weight_bits`` set (which needs a trained ``init_state``), every forward and
+    ``cfg.quantize`` set (which needs a trained ``init_state``), every forward and
     backward pass runs on quantized weights, so what ``evaluate`` sees and what the model
     is left with are the quantized model's.
     """
@@ -105,13 +106,12 @@ def fit(
     model.to(cfg.device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
 
-    # weight_bits=6 keeps each weight at step * an integer in [-31, 31]. The model holds
-    # the quantized weights; the float ones come back only for the optimizer update. With
-    # weight_bits unset, steps is empty and none of this touches the model.
+    # quantize keeps each weight at step * an integer in [-31, 31]. The model holds the
+    # quantized weights; the float ones come back only for the optimizer update. With
+    # quantize unset, steps is empty and none of this touches the model.
     params = dict(model.named_parameters())
-    qmax = 2 ** (cfg.weight_bits - 1) - 1 if cfg.weight_bits else 0
-    steps = _weight_steps(model) if cfg.weight_bits else {}
-    floats = _quantize(model, steps, qmax)
+    steps = _weight_steps(model) if cfg.quantize else {}
+    floats = _quantize(model, steps)
 
     for epoch in range(cfg.epochs):
         model.train()
@@ -127,7 +127,7 @@ def fit(
                 for name, w in floats.items():
                     params[name].copy_(w)
             opt.step()
-            floats = _quantize(model, steps, qmax)
+            floats = _quantize(model, steps)
             loss_sum += loss.item()
             if b % cfg.log_every == 0:
                 ms_per_batch = (time.perf_counter() - t0) / b * 1e3

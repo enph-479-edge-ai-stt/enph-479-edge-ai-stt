@@ -69,7 +69,7 @@ def export(model: LstmNet, out_dir: str | Path, name: str, **extra: object) -> N
     """Write ``<name>_fabric.mem`` and ``.json`` for a model fine-tuned with 6-bit weights.
 
     ``extra`` is anything else the ARM needs for this model (the AM's CMVN statistics). It
-    goes into the JSON next to the model's dimensions and number formats.
+    goes into the JSON next to the model's dimensions and input scale.
     """
     sd = {k: v.cpu() for k, v in model.state_dict().items()}
     hidden, n_out = model.lstm.hidden_size, model.proj.out_features
@@ -95,14 +95,8 @@ def export(model: LstmNet, out_dir: str | Path, name: str, **extra: object) -> N
         "n_hidden": hidden,
         "n_layers": model.lstm.num_layers,
         "n_out": n_out,
-        "weight_bits": WEIGHT_BITS,
-        "lstm_frac": LSTM_FRAC,
-        "proj_frac": PROJ_FRAC,
-        "h_frac": H_FRAC,
         "x_frac": model.x_frac,
-        "bias_bits": BIAS_BITS,
         "rows": len(rows),
-        "words_per_row": len(rows[0]),
         **extra,
     }
     out_dir = Path(out_dir)
