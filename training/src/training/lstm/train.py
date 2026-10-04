@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 
 import torch
@@ -34,15 +34,6 @@ class TrainConfig:
     quantize: bool = False  # hold the weights on the FPGA's 6-bit grid (fine-tuning)
     log_every: int = 50  # batches between progress lines
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
-
-    def fine_tune(self) -> TrainConfig:
-        """The run that follows this one: the same model with its weights held at 6 bits.
-
-        A tenth of the learning rate for a quarter of the epochs. Both are first guesses.
-        """
-        # Rounded so the log shows 3e-05, not 2.9999999999999997e-05.
-        lr = round(self.lr / 10, 10)
-        return replace(self, lr=lr, epochs=max(1, self.epochs // 4), quantize=True)
 
 
 def _log(log_path: Path, msg: str) -> None:
