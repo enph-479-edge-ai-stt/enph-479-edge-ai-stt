@@ -20,7 +20,10 @@ import torch
 from torch.nn import functional as F
 
 from training import vocab
+from training.am.dataset import list_utterances
+from training.cm.dataset import sample_sentences, to_stream
 from training.cm.model import CharModel
+from training.data.librispeech import download_lm_text, download_subset
 from training.lstm import train as lstm
 
 
@@ -34,6 +37,22 @@ class TrainConfig(lstm.TrainConfig):
     bptt: int = 100  # characters per truncated-BPTT chunk; one chunk is one batch
     epochs: int = 5
     log_every: int = 1000
+    keep: float = 0.05  # fraction of the LM text's sentences to train on
+
+
+def load_data(data_dir: str | Path, cfg: TrainConfig) -> dict[str, np.ndarray]:
+    """Download the LM text and dev-clean to ``data_dir`` and build what ``train`` takes.
+
+    Streams the corpus (1.5 GB gzip, kept gzipped) once to sample ``cfg.keep`` of its
+    sentences, and tests on dev-clean's transcripts, which the LM text excludes. Both sides
+    become EOS-joined index streams.
+    """
+    train_sents = sample_sentences(download_lm_text(data_dir), keep=cfg.keep)
+    dev_sents = [text for _, text in list_utterances(download_subset("dev-clean", data_dir))]
+    streams = {"train": to_stream(train_sents), "test": to_stream(dev_sents)}
+    print(f"train {len(train_sents):,} sentences, {len(streams['train']):,} chars")
+    print(f"dev {len(dev_sents):,} sentences, {len(streams['test']):,} chars")
+    return streams
 
 
 def _streams(stream: np.ndarray, batch_size: int) -> torch.Tensor:

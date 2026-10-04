@@ -16,8 +16,9 @@ from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from training import vocab
-from training.am.dataset import collate
+from training.am.dataset import LibriSpeechFeatures, collate, compute_cmvn_over, list_utterances
 from training.am.model import AcousticModel
+from training.data.librispeech import download_subset
 from training.lstm import train as lstm
 
 
@@ -27,6 +28,26 @@ class TrainConfig(lstm.TrainConfig):
 
     dropout: float = 0.2
     num_workers: int = 2
+
+
+def load_data(
+    data_dir: str | Path, cfg: TrainConfig
+) -> tuple[dict[str, list[Dataset]], dict[str, torch.Tensor]]:
+    """Download LibriSpeech to ``data_dir`` and build what ``train`` takes.
+
+    Trains on train-clean-100 (6.3 GB) and tests on dev-clean (337 MB). Also returns the
+    CMVN statistics, to be saved with the weights: they are useless without them.
+    """
+    train_items = list_utterances(download_subset("train-clean-100", data_dir))
+    dev_items = list_utterances(download_subset("dev-clean", data_dir))
+    print(f"train {len(train_items)} utts, dev {len(dev_items)} utts")
+    # Every 10th training utterance is plenty for a global mean/std.
+    mean, std = compute_cmvn_over(train_items[::10], num_workers=cfg.num_workers)
+    datasets = {
+        "train": [LibriSpeechFeatures(train_items, mean, std)],
+        "test": [LibriSpeechFeatures(dev_items, mean, std)],
+    }
+    return datasets, {"cmvn_mean": mean, "cmvn_std": std}
 
 
 @torch.no_grad()

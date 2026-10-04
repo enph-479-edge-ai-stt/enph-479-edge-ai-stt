@@ -40,4 +40,4 @@ class AcousticModel(LstmNet):
         packed = pack_padded_sequence(feats, lengths.cpu(), batch_first=True, enforce_sorted=False)
         out, _ = self.lstm(packed)
         out, _ = pad_packed_sequence(out, batch_first=True)
-        return self.proj(out).log_softmax(dim=-1)
+        return self.log_probs(out)

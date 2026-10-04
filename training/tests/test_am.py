@@ -1,4 +1,6 @@
-"""Acoustic-model tests: features, dataset, collate, model, and the training loop.
+"""Acoustic-model tests: features, dataset, collate and model.
+
+Whole runs are tested in test_lstm.py, on both models.
 
 Synthetic data only (noise FLACs in a temp dir), CPU, no network. Skips when
 torch/torchaudio are absent, which is the case on CI (they aren't locked deps).
@@ -11,34 +13,16 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("torchaudio")
 
-import soundfile as sf  # noqa: E402
+from conftest import TEXTS, write_subset  # noqa: E402
 
 from training import vocab  # noqa: E402
 from training.am.dataset import (  # noqa: E402
     LibriSpeechFeatures,
     collate,
-    compute_cmvn_over,
     list_utterances,
 )
 from training.am.model import AcousticModel  # noqa: E402
-from training.am.train import TrainConfig, train  # noqa: E402
 from training.features import fbank  # noqa: E402
-from training.lstm.export import export  # noqa: E402
-
-TEXTS = ["HELLO WORLD", "CAT", "IT'S FINE", "DOG"]
-
-
-def _write_subset(root):
-    """Four noise FLACs (0.5-1.1 s) with transcripts, in LibriSpeech's layout."""
-    chapter = root / "1" / "2"
-    chapter.mkdir(parents=True)
-    lines = []
-    for i, text in enumerate(TEXTS):
-        wav = (torch.randn(8000 + 3000 * i) * 0.1).numpy()
-        sf.write(str(chapter / f"1-2-{i:04d}.flac"), wav, 16000, format="FLAC")
-        lines.append(f"1-2-{i:04d} {text}")
-    (chapter / "1-2.trans.txt").write_text("\n".join(lines), encoding="utf-8")
-    return root
 
 
 def test_extract_is_123_dim_at_100_frames_per_s():
@@ -56,7 +40,7 @@ def test_cmvn_normalizes_to_zero_mean_unit_std():
 
 
 def test_dataset_reads_flac_and_encodes_labels(tmp_path):
-    items = list_utterances(_write_subset(tmp_path))
+    items = list_utterances(write_subset(tmp_path))
     assert [text for _, text in items] == TEXTS
     feats, labels = LibriSpeechFeatures(items)[0]
     assert feats.size(1) == 123
@@ -100,38 +84,3 @@ def test_overfit_one_batch_drives_loss_down():
         opt.step()
         losses.append(loss.item())
     assert losses[-1] < 0.4 * losses[0]
-
-
-def test_train_runs_end_to_end_on_tiny_data(tmp_path):
-    items = list_utterances(_write_subset(tmp_path))
-    mean, std = compute_cmvn_over(items)
-    cfg = TrainConfig(n_hidden=16, n_layers=1, batch_size=2, epochs=1, num_workers=0, device="cpu")
-    datasets = {  # two train datasets, to check they get pooled
-        "train": [
-            LibriSpeechFeatures(items[:2], mean, std),
-            LibriSpeechFeatures(items[2:], mean, std),
-        ],
-        "test": [LibriSpeechFeatures(items[:2], mean, std)],
-    }
-    model = train(cfg, datasets, tmp_path / "train.log")
-    assert isinstance(model, AcousticModel)
-    assert "[epoch 0]" in (tmp_path / "train.log").read_text(encoding="utf-8")
-
-
-def test_train_with_weight_bits_returns_quantized_weights(tmp_path):
-    items = list_utterances(_write_subset(tmp_path))
-    mean, std = compute_cmvn_over(items)
-    cfg = TrainConfig(
-        n_hidden=32, n_layers=1, batch_size=2, epochs=1, num_workers=0, device="cpu", weight_bits=6
-    )
-    datasets = {
-        "train": [LibriSpeechFeatures(items, mean, std)],
-        "test": [LibriSpeechFeatures(items[:2], mean, std)],
-    }
-    init_state = AcousticModel(n_hidden=32, n_layers=1).state_dict()
-    model = train(cfg, datasets, tmp_path / "train.log", init_state)
-    for name, w in model.named_parameters():
-        if "weight" in name:  # 6 bits: integers in [-31, 31] times one step per matrix
-            assert w.unique().numel() <= 63, name
-    export(model, tmp_path, "am", cmvn_mean=mean.tolist())  # on the FPGA's grid, so it packs
-    assert (tmp_path / "am_fabric.mem").exists()

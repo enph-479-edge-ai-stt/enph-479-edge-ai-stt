@@ -38,4 +38,4 @@ class CharModel(LstmNet):
         """
         x = F.one_hot(chars.long(), self.lstm.input_size).float()
         out, state = self.lstm(x, state)
-        return self.proj(out).log_softmax(dim=-1), state
+        return self.log_probs(out), state

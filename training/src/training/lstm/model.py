@@ -8,6 +8,7 @@ training loop, the 6-bit fine-tune and the weight image export work on this clas
 
 from __future__ import annotations
 
+import torch
 from torch import nn
 
 
@@ -29,3 +30,7 @@ class LstmNet(nn.Module):
             dropout=dropout if n_layers > 1 else 0.0,  # nn.LSTM warns on 1 layer
         )
         self.proj = nn.Linear(n_hidden, n_out)
+
+    def log_probs(self, out: torch.Tensor) -> torch.Tensor:
+        """LSTM outputs ``[..., n_hidden]`` -> log-probabilities over the ``n_out`` symbols."""
+        return self.proj(out).log_softmax(dim=-1)
