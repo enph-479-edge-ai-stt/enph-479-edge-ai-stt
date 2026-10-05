@@ -27,7 +27,7 @@ module tb_weight_bram;
         .address(address), .data_in(data_in), .data_out(data_out)
     );
  
-    // write one row
+    // Write one row
     task write_row(input [ADDR_WIDTH-1:0] a, input [ROW_WIDTH-1:0] d);
         begin
             @(negedge clk);
@@ -37,12 +37,12 @@ module tb_weight_bram;
         end
     endtask
  
-    // read one row (registered output: valid one clock after address)
+    // Read one row (registered output: valid one clock after address)
     task read_row(input [ADDR_WIDTH-1:0] a, input [ROW_WIDTH-1:0] exp);
         begin
             @(negedge clk);
             address = a;
-            @(negedge clk);          // data_out updates on the posedge between
+            @(negedge clk);          // Data_out updates on the posedge between
             if (data_out !== exp) begin
                 $display("FAIL: addr=%0d  got=%h  expected=%h",
                          a, data_out[31:0], exp[31:0]);
@@ -53,7 +53,7 @@ module tb_weight_bram;
         end
     endtask
  
-    // build a row where neuron k holds weight (k mod 64)
+    // Build a row where neuron k holds weight (k mod 64)
     function [ROW_WIDTH-1:0] pattern_row(input integer seed);
         integer k;
         begin
@@ -93,7 +93,7 @@ module tb_weight_bram;
             $display("pass: per-neuron slices readable");
         end
  
-        // overwrite and confirm the new value sticks
+        // Overwrite and confirm the new value sticks
         write_row(0, row_c);
         read_row(0, row_c);
  
@@ -102,7 +102,7 @@ module tb_weight_bram;
         $finish;
     end
 
-    // watchdog: fail rather than hang if a wait never returns
+    // Watchdog: fail rather than hang if a wait never returns
     initial begin
         #100000;
         $display("FAIL: timeout, testbench did not finish");

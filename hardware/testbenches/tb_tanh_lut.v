@@ -8,7 +8,7 @@ module tb_tanh_lut;
     integer errors = 0;
     integer i;
  
-    // expected values, mirrored from the LUT table
+    // Expected values, mirrored from the LUT table
     reg signed [7:0] expected [0:15];
  
     tanh_lut dut (
@@ -44,20 +44,20 @@ module tb_tanh_lut;
  
         $display("--- shape checks ---");
  
-        // midpoint must be 0, unlike sigmoid which is 128 there
+        // Midpoint must be 0, unlike sigmoid which is 128 there
         index = 4'd8; #1;
         if (tanh_output !== 8'sd0) begin
             $display("FAIL: index 8 should be 0"); errors = errors + 1;
         end else $display("pass: midpoint is 0");
  
-        // negative half must actually read as negative, catches a missing 'signed'
+        // Negative half must actually read as negative, catches a missing 'signed'
         index = 4'd7; #1;
         if (!(tanh_output < 0)) begin
             $display("FAIL: index 7 should be negative, got %0d", tanh_output);
             errors = errors + 1;
         end else $display("pass: lower half is negative");
  
-        // odd symmetry: tanh(-x) = -tanh(x), so entries either side of 8 mirror
+        // Odd symmetry: tanh(-x) = -tanh(x), so entries either side of 8 mirror
         for (i = 1; i <= 7; i = i + 1) begin
             index = 8 - i; #1;
             begin : sym
@@ -80,7 +80,7 @@ module tb_tanh_lut;
         $finish;
     end
 
-    // watchdog: fail rather than hang if a wait never returns
+    // Watchdog: fail rather than hang if a wait never returns
     initial begin
         #100000;
         $display("FAIL: timeout, testbench did not finish");
