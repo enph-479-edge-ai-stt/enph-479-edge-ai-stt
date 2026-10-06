@@ -1,7 +1,8 @@
 """The training loop the acoustic and character models share.
 
 Runs start to finish in one session: logs progress and, after every epoch, the model's
-own evaluation (to the notebook output and a log file). With ``quantize`` set it
+own evaluation (to the notebook output and a log file). The learning rate falls from
+``cfg.lr`` to 0 on one cosine over the run. With ``quantize`` set it
 fine-tunes a trained model with its weights quantized, the paper's "retraining based
 fixed-point optimization" (weights only; activations and the cell stay float). The
 weights land on the FPGA's fixed-point grid, so ``lstm/export.py`` can pack the result.
@@ -27,7 +28,7 @@ class TrainConfig:
 
     n_hidden: int = 256
     n_layers: int = 3
-    lr: float = 3e-4
+    lr: float = 3e-4  # where the run starts; it falls to 0 on a cosine
     grad_clip: float = 5.0
     batch_size: int = 32
     epochs: int = 20
@@ -96,6 +97,8 @@ def fit(
         model.load_state_dict(init_state)
     model.to(cfg.device)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    # One cosine from cfg.lr down to 0 over the whole run, stepped every batch.
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg.epochs * n_batches)
 
     # quantize keeps each weight at step * an integer in [-31, 31]. The model holds the
     # quantized weights; the float ones come back only for the optimizer update. With
@@ -118,6 +121,7 @@ def fit(
                 for name, w in floats.items():
                     params[name].copy_(w)
             opt.step()
+            sched.step()
             floats = _quantize(model, steps)
             loss_sum += loss.item()
             if b % cfg.log_every == 0:
