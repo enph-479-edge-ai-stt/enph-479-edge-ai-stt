@@ -31,15 +31,16 @@ class TrainConfig(lstm.TrainConfig):
 
 
 def load_data(
-    data_dir: str | Path, cfg: TrainConfig
+    data_dir: str | Path, cache_dir: str | Path, cfg: TrainConfig
 ) -> tuple[dict[str, list[Dataset]], dict[str, torch.Tensor]]:
-    """Download LibriSpeech to ``data_dir`` and build what ``train`` takes.
+    """Get LibriSpeech into ``data_dir`` and build what ``train`` takes.
 
-    Trains on train-clean-100 (6.3 GB) and tests on dev-clean (337 MB). Also returns the
+    Trains on train-clean-100 (6.3 GB) and tests on dev-clean (337 MB). The archives come
+    from ``cache_dir`` on Drive, which the first run fills from OpenSLR. Also returns the
     CMVN statistics, to be saved with the weights: they are useless without them.
     """
-    train_items = list_utterances(download_subset("train-clean-100", data_dir))
-    dev_items = list_utterances(download_subset("dev-clean", data_dir))
+    train_items = list_utterances(download_subset("train-clean-100", data_dir, cache_dir))
+    dev_items = list_utterances(download_subset("dev-clean", data_dir, cache_dir))
     print(f"train {len(train_items)} utts, dev {len(dev_items)} utts")
     # Every 10th training utterance is plenty for a global mean/std.
     mean, std = compute_cmvn_over(train_items[::10], num_workers=cfg.num_workers)
