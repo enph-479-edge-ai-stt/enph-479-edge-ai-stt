@@ -83,7 +83,7 @@ module tb_weight_bram;
         read_row(61,  row_b);
         read_row(122, row_c);
  
-        // check a single neuron's slice came through intact
+        // Check a single neuron's slice came through intact
         @(negedge clk); address = 0; @(negedge clk);
         if (data_out[5:0] !== 6'd0 || data_out[11:6] !== 6'd1) begin
             $display("FAIL: per-neuron slices  neuron0=%0d (exp 0)  neuron1=%0d (exp 1)",
