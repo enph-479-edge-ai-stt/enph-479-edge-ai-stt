@@ -7,7 +7,7 @@ module tb_sigmoid_lut;
  
     integer errors = 0;
  
-    // expected values, mirrored from the LUT table
+    // Expected values, mirrored from the LUT table
     reg [7:0] expected [0:15];
  
     sigmoid_lut dut (
@@ -15,7 +15,7 @@ module tb_sigmoid_lut;
         .sigmoid_output (sigmoid_output)
     );
  
-    // one check: drive an index, wait for combinational settle, compare
+    // One check: drive an index, wait for combinational settle, compare
     task check(input [3:0] idx);
         begin
             index = idx;
@@ -45,7 +45,7 @@ module tb_sigmoid_lut;
  
         $display("--- shape checks ---");
 
-        // sigmoid is monotonic non-decreasing, so each entry must be >= the
+        // Sigmoid is monotonic non-decreasing, so each entry must be >= the
         // one before it. The midpoint (index 8 = 128) is already covered by
         // the sweep above.
         begin : mono
@@ -72,7 +72,7 @@ module tb_sigmoid_lut;
         $finish;
     end
 
-    // watchdog: fail rather than hang if a wait never returns
+    // Watchdog: fail rather than hang if a wait never returns
     initial begin
         #100000;
         $display("FAIL: timeout, testbench did not finish");
