@@ -1,7 +1,7 @@
 [project]
 name = "stt-training"
 version = "0.1.0"
-description = "ENPH 479 STT — offline training pipeline: CTC-LSTM acoustic model, char-LM, KenLM word-LM, exported to QONNX for a Kria KV260."
+description = "ENPH 479 STT — offline training pipeline: CTC-LSTM acoustic model, char-LM, KenLM word-LM, exported as a weight image for a Kria KV260."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"

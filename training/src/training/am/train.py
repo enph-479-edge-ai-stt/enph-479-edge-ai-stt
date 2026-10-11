@@ -1,12 +1,12 @@
-"""CTC training loop for the acoustic model.
+"""CTC training of the acoustic model, on the shared loop in ``lstm/train.py``.
 
-Runs start to finish in one session: logs greedy test CER after every epoch (to the
-notebook output and a log file) and returns the trained model.
+This module supplies what is the AM's own: its data loaders, the CTC loss, and greedy
+test CER as the per-epoch evaluation.
 """
 
 from __future__ import annotations
 
-import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,24 +16,38 @@ from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 from training import vocab
-from training.am.dataset import collate
+from training.am.dataset import LibriSpeechFeatures, collate, compute_cmvn_over, list_utterances
 from training.am.model import AcousticModel
+from training.data.librispeech import download_subset
+from training.lstm import train as lstm
 
 
 @dataclass
-class TrainConfig:
+class TrainConfig(lstm.TrainConfig):
     """Hyperparameters for one training run."""
 
-    n_hidden: int = 256
-    n_layers: int = 3
     dropout: float = 0.2
-    lr: float = 3e-4
-    grad_clip: float = 5.0
-    batch_size: int = 32
-    epochs: int = 20
     num_workers: int = 2
-    log_every: int = 50  # batches between progress lines
-    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def load_data(
+    data_dir: str | Path, cfg: TrainConfig
+) -> tuple[dict[str, list[Dataset]], dict[str, torch.Tensor]]:
+    """Download LibriSpeech to ``data_dir`` and build what ``train`` takes.
+
+    Trains on train-clean-100 (6.3 GB) and tests on dev-clean (337 MB). Also returns the
+    CMVN statistics, to be saved with the weights: they are useless without them.
+    """
+    train_items = list_utterances(download_subset("train-clean-100", data_dir))
+    dev_items = list_utterances(download_subset("dev-clean", data_dir))
+    print(f"train {len(train_items)} utts, dev {len(dev_items)} utts")
+    # Every 10th training utterance is plenty for a global mean/std.
+    mean, std = compute_cmvn_over(train_items[::10], num_workers=cfg.num_workers)
+    datasets = {
+        "train": [LibriSpeechFeatures(train_items, mean, std)],
+        "test": [LibriSpeechFeatures(dev_items, mean, std)],
+    }
+    return datasets, {"cmvn_mean": mean, "cmvn_std": std}
 
 
 @torch.no_grad()
@@ -49,24 +63,20 @@ def greedy_cer(model: AcousticModel, loader: DataLoader, device: torch.device) -
     return float(jiwer.cer(refs, hyps))
 
 
-def _log(log_path: Path, msg: str) -> None:
-    print(msg)
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(msg + "\n")
-
-
 def train(
-    cfg: TrainConfig, datasets: dict[str, list[Dataset]], log_path: str | Path
+    cfg: TrainConfig,
+    datasets: dict[str, list[Dataset]],
+    log_path: str | Path,
+    init_state: dict[str, torch.Tensor] | None = None,
 ) -> AcousticModel:
     """Train on all of ``datasets["train"]``; after each epoch, log CER on all of ``"test"``.
 
     Each role is a list of datasets in any format, pooled together. A dataset only has to
     yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
     epoch lines are printed and written to ``log_path`` (overwritten). Returns the model.
+
+    ``init_state`` and ``cfg.quantize`` are the 6-bit fine-tune, see ``lstm.fit``.
     """
-    log_path = Path(log_path)
-    log_path.write_text("", encoding="utf-8")
-    _log(log_path, str(cfg))
     device = torch.device(cfg.device)
     loader_kw = {
         "batch_size": cfg.batch_size,
@@ -78,37 +88,22 @@ def train(
     test_loader = DataLoader(ConcatDataset(datasets["test"]), **loader_kw)
 
     model = AcousticModel(n_hidden=cfg.n_hidden, n_layers=cfg.n_layers, dropout=cfg.dropout)
-    model.to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     ctc = nn.CTCLoss(blank=vocab.BLANK_IDX, zero_infinity=True)
 
-    n_batches = len(train_loader)
-    for epoch in range(cfg.epochs):
-        model.train()
-        t0 = time.perf_counter()
-        loss_sum = 0.0
-        for b, (feats, feat_len, labels, label_len) in enumerate(train_loader, 1):
+    def losses() -> Iterator[torch.Tensor]:
+        for feats, feat_len, labels, label_len in train_loader:
             logp = model(feats.to(device, non_blocking=True), feat_len)  # [B, T, N]
             # CTCLoss wants [T, B, N]; the length vectors stay on the CPU.
-            loss = ctc(logp.transpose(0, 1), labels.to(device), feat_len, label_len)
-            opt.zero_grad()
-            loss.backward()
-            nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip)  # LSTMs explode
-            opt.step()
-            loss_sum += loss.item()
-            if b % cfg.log_every == 0:
-                s_per_batch = (time.perf_counter() - t0) / b
-                _log(
-                    log_path,
-                    f"epoch {epoch} batch {b}/{n_batches} loss {loss_sum / b:.3f} "
-                    f"({s_per_batch:.2f} s/batch)",
-                )
-        train_s = time.perf_counter() - t0
+            yield ctc(logp.transpose(0, 1), labels.to(device), feat_len, label_len)
 
-        cer = greedy_cer(model, test_loader, device)
-        _log(
-            log_path,
-            f"[epoch {epoch}] train loss {loss_sum / n_batches:.3f} | test CER {cer:.4f} | "
-            f"train {train_s:.0f}s, eval {time.perf_counter() - t0 - train_s:.0f}s",
-        )
+    lstm.fit(
+        model,
+        cfg,
+        losses,
+        len(train_loader),
+        lambda loss: f"train loss {loss:.3f}",
+        lambda: f"test CER {greedy_cer(model, test_loader, device):.4f}",
+        log_path,
+        init_state,
+    )
     return model

@@ -1,4 +1,6 @@
-"""Character-model tests: corpus sampling and encoding, model, BPTT chunking, training loop.
+"""Character-model tests: corpus sampling and encoding, model, BPTT chunking.
+
+Whole runs are tested in test_lstm.py, on both models.
 
 Synthetic text only (a tiny gzipped corpus in a temp dir), CPU, no network. Skips
 when torch is absent, which is the case on CI (it isn't a locked dep).
@@ -13,18 +15,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from conftest import SENTENCES  # noqa: E402
+
 from training import vocab  # noqa: E402
 from training.cm.dataset import sample_sentences, to_stream  # noqa: E402
 from training.cm.model import CharModel  # noqa: E402
-from training.cm.train import (  # noqa: E402
-    TrainConfig,
-    _chunks,
-    _streams,
-    bits_per_char,
-    train,
-)
-
-SENTENCES = ["HELLO WORLD", "THE CAT SAT", "IT'S FINE", "A DOG RAN HOME"]
+from training.cm.train import _chunks, _streams, bits_per_char  # noqa: E402
 
 
 def _write_corpus(path, sentences):
@@ -104,13 +100,3 @@ def test_overfit_one_stream_drives_loss_down():
         opt.step()
         losses.append(loss.item())
     assert losses[-1] < 0.2 * losses[0]
-
-
-def test_train_runs_end_to_end_on_tiny_data(tmp_path):
-    streams = {"train": to_stream(SENTENCES * 10), "test": to_stream(SENTENCES)}
-    cfg = TrainConfig(n_hidden=16, n_layers=2, batch_size=2, bptt=10, epochs=1, device="cpu")
-    model = train(cfg, streams, tmp_path / "train.log")
-    assert isinstance(model, CharModel)
-    log = (tmp_path / "train.log").read_text(encoding="utf-8")
-    assert "[epoch 0]" in log
-    assert "sample:" in log

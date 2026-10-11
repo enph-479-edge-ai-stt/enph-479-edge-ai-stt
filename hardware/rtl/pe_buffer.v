@@ -3,66 +3,79 @@
 //=====================================================================
 // Module: pe_buffer.v
 // Description:
-//  Processing Element (PE) buffer. This module stores the accumulated
-//  values for all four PE output buffers on each enabled cycle and holds
-//  them for the LSTM EPU to read.
+//  Four gate memories between the PE array and the LSTM EPU.
+//  pe_in0 and pe_in1 each carry PE_COUNT lanes. capture writes every
+//  lane in one cycle: gate_pair 0 stores them as i and f, gate_pair 1
+//  stores them as o and c. addr then reads one neuron from all four
+//  memories. pe_i, pe_f, pe_o, and pe_c are that 16-bit read. After the
+//  capture the PE array can be reused; the lanes live here.
 //
 // Parameters:
-//  OUTPUT_ELEMENT_WIDTH    - bit width of PE output
+//  GATE_WIDTH   - bits stored per lane
+//  PE_COUNT     - neurons captured from each PE array
 //
 // Ports:
-//  clk             - clock
-//  rst             - reset signal
-//  enable          - when high, store pe_output into selected buffer
-//  buffer_select   - select which buffer to write into: 0 = i, 1 = f, 2 = o, 3 = c
-//  pe_i            - stored result for input gate
-//  pe_f            - stored result for forget gate
-//  pe_o            - stored result for output gate
-//  pe_c            - stored result for candidate
+//  clk          - clock
+//  rst          - reset, clears every lane
+//  capture      - when high, copy both PE buses into the selected pair
+//  gate_pair    - 0 = i from pe_in0 and f from pe_in1; 1 = o and c
+//  pe_in0       - packed array-0 result, lane 0 in the LSBs
+//  pe_in1       - packed array-1 result, lane 0 in the LSBs
+//  addr         - neuron read by pe_i, pe_f, pe_o, pe_c
+//  pe_i/f/o/c   - gate pre-activations for addr, combinational
 //=====================================================================
 
 module pe_buffer #(
-    parameter OUTPUT_ELEMENT_WIDTH = 16, // pretty sure output element width is 16
-    parameter PE_INPUT_ARRAY_SIZE = 256
+    parameter GATE_WIDTH = 16,
+    parameter PE_COUNT = 256,
+    parameter ADDR_WIDTH = (PE_COUNT <= 1) ? 1 : $clog2(PE_COUNT)
 ) (
     input wire clk,
     input wire rst,
-    input wire enable,
-    
-    input wire signed [PE_INPUT_ARRAY_SIZE * OUTPUT_ELEMENT_WIDTH-1:0] pe_input0,
-    input wire signed [PE_INPUT_ARRAY_SIZE * OUTPUT_ELEMENT_WIDTH-1:0] pe_input1,
+    input wire capture,
+    input wire gate_pair,
 
-    input wire [1:0] buffer_select, // Two bits to represent 4 different PE output buffers
-    input wire input_select, // 0 for pe_input0, 1 for pe_input1
-    input wire [7:0] input_index, // index of the input to copy into the buffer
+    input wire signed [PE_COUNT*GATE_WIDTH-1:0] pe_in0,
+    input wire signed [PE_COUNT*GATE_WIDTH-1:0] pe_in1,
+    input wire [ADDR_WIDTH-1:0] addr,
 
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_output;
-
-    output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_i,
-    output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_f,
-    output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_o,
-    output reg signed [OUTPUT_ELEMENT_WIDTH-1:0] pe_c
+    output wire signed [GATE_WIDTH-1:0] pe_i,
+    output wire signed [GATE_WIDTH-1:0] pe_f,
+    output wire signed [GATE_WIDTH-1:0] pe_o,
+    output wire signed [GATE_WIDTH-1:0] pe_c
 );
+
+    reg signed [GATE_WIDTH-1:0] mem_i [0:PE_COUNT-1];
+    reg signed [GATE_WIDTH-1:0] mem_f [0:PE_COUNT-1];
+    reg signed [GATE_WIDTH-1:0] mem_o [0:PE_COUNT-1];
+    reg signed [GATE_WIDTH-1:0] mem_c [0:PE_COUNT-1];
+
+    integer n;
 
     always @(posedge clk) begin
         if (rst) begin
-            pe_i <= 0;
-            pe_f <= 0;
-            pe_o <= 0;
-            pe_c <= 0;
+            for (n = 0; n < PE_COUNT; n = n + 1) begin
+                mem_i[n] <= {GATE_WIDTH{1'b0}};
+                mem_f[n] <= {GATE_WIDTH{1'b0}};
+                mem_o[n] <= {GATE_WIDTH{1'b0}};
+                mem_c[n] <= {GATE_WIDTH{1'b0}};
+            end
+        end else if (capture) begin
+            for (n = 0; n < PE_COUNT; n = n + 1) begin
+                if (!gate_pair) begin
+                    mem_i[n] <= pe_in0[n*GATE_WIDTH +: GATE_WIDTH];
+                    mem_f[n] <= pe_in1[n*GATE_WIDTH +: GATE_WIDTH];
+                end else begin
+                    mem_o[n] <= pe_in0[n*GATE_WIDTH +: GATE_WIDTH];
+                    mem_c[n] <= pe_in1[n*GATE_WIDTH +: GATE_WIDTH];
+                end
+            end
         end
-        else if (enable) begin
-
-            pe_output = (input_select == 1'b0) ? pe_input0[input_index * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH] : pe_input1[input_index * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH];
-
-            if(buffer_select == 2'd0)
-                pe_i <= pe_output;
-            else if (buffer_select == 2'd1)
-                pe_f <= pe_output;
-            else if (buffer_select == 2'd2)
-                pe_o <= pe_output;
-            else if (buffer_select == 2'd3)
-                pe_c <= pe_output;
-        end 
     end
+
+    assign pe_i = mem_i[addr];
+    assign pe_f = mem_f[addr];
+    assign pe_o = mem_o[addr];
+    assign pe_c = mem_c[addr];
+
 endmodule
