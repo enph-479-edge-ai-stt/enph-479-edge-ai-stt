@@ -38,9 +38,9 @@ The live, real-time system above is the end goal. We get there in two stages:
 ## Repository layout
 
 - `hardware/`: hand-written RTL for the LSTM accelerator. In progress; several modules are still empty stubs.
-- `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, and one LSTM pipeline (training loop, 6-bit weight fine-tune, weight-image export) shared by the acoustic model and the character LM, run from `training/notebooks/am_training.ipynb` and `cm_training.ipynb` on Colab.
-- `runtime/`: the on-board program for the KV260. Not started; the real-time part is the term 2 goal.
-- `shared/`: cross-vertical specs and golden vectors. So far: the weight image layout (`shared/specs/weight_image.md`).
+- `training/`: the offline pipeline (Python). Today: LibriSpeech download, 123-dim filterbank features, and one LSTM pipeline (training loop, 6-bit weight fine-tune, weight-image export) shared by the acoustic model and the character LM, run from `training/notebooks/am_training.ipynb` and `cm_training.ipynb` on Colab; and decoding (beam search with the char-LM and the KenLM word LM, tuned and evaluated on dev-clean from `decode.ipynb`).
+- `runtime/`: the on-board program for the KV260. So far the decoder (beam search with the char-LM and word LM), a copy of training's; the real-time part is the term 2 goal.
+- `shared/`: cross-vertical specs and golden vectors. So far: the weight image layout (`shared/specs/weight_image.md`) and the decoder's golden case (`shared/golden/decode/`).
 
 ## Getting the code
 
