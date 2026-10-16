@@ -1,0 +1,69 @@
+[project]
+name = "stt-runtime"
+version = "0.1.0"
+description = "ENPH 479 STT — the program on the Kria KV260's ARM cores: feeds the fabric, decodes its output with the char-LM and word-LM."
+readme = "README.md"
+# The board's Python: Ubuntu 22.04 for Kria, and the Kria-PYNQ venv on top of it.
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Kai Asaoka" },
+    { name = "Sudharshan Kannan" },
+    { name = "Andrew Du" },
+    { name = "Anubhav Saini" },
+]
+dependencies = [
+    "numpy>=1.21",
+]
+
+[project.optional-dependencies]
+# The word LM. The board needs it; it is optional because kenlm has no wheels and
+# builds from source, which fails on Windows. `uv sync --extra wlm` on Linux. With a
+# uv-managed Python, build it with clang (`CC=clang CXX=clang++`): that Python passes
+# a clang-only flag that gcc rejects. The tests that need it skip without it.
+wlm = ["kenlm>=0.3"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src layout: the importable package is runtime/src/runtime/ -> `runtime`.
+packages = ["src/runtime"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort (import ordering)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "D",   # pydocstyle (Google-style docstrings)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["runtime"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]
