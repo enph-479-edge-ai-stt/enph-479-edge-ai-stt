@@ -22,6 +22,7 @@ jobs:
       pull-requests: read
     outputs:
       training: ${{ steps.filter.outputs.training }}
+      runtime: ${{ steps.filter.outputs.runtime }}
     steps:
       # PRs are diffed through the API; pushes to main are diffed with git, which needs the checkout.
       - uses: actions/checkout@v4
@@ -32,6 +33,11 @@ jobs:
           filters: |
             training:
               - "training/**"
+              - "shared/**"
+              - ".github/workflows/ci.yml"
+            runtime:
+              - "runtime/**"
+              - "shared/**"
               - ".github/workflows/ci.yml"
 
   training:
@@ -52,8 +58,42 @@ jobs:
 
       # No OneDrive on CI, so the default in-repo .venv is fine here.
       # Python 3.12.0 is pinned by training/.python-version and fetched by uv if missing.
-      - name: Sync (installs the dev group of ruff and pytest)
-        run: uv sync --frozen
+      # The wlm extra is kenlm, built from source with clang (uv's Python is clang-built
+      # and passes a flag gcc rejects), so the decoder's golden case runs here too.
+      - name: Sync (installs the dev group of ruff and pytest, and the wlm extra)
+        run: uv sync --frozen --extra wlm
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest
+
+  runtime:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "runtime/uv.lock"
+
+      # Python 3.10 (the board's) is pinned by runtime/.python-version. kenlm as in training.
+      - name: Sync (installs the dev group of ruff and pytest, and the wlm extra)
+        run: uv sync --frozen --extra wlm
+        env:
+          CC: clang
+          CXX: clang++
 
       - name: Ruff lint
         run: uv run ruff check .
