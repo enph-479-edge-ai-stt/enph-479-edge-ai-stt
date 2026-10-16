@@ -13,7 +13,10 @@ The offline pipeline (Python). Today it trains the acoustic model (AM) and the c
   - `export.py`: packs a 6-bit model into the weight image the FPGA loads, `<name>_fabric.mem` (the weight memory's contents) and `<name>_fabric.json` (dimensions and input scale for the ARM). The layout is specified in `shared/specs/weight_image.md`. Also `save_run`, the one definition of what a run leaves on Drive: both checkpoints, both logs and the image.
 - `src/training/am/`: what is the AM's own. Feature input with padding, the dataset and `load_data` (download, CMVN), the CTC loss and greedy CER.
 - `src/training/cm/`: what is the CM's own (the paper's char-LM). One-hot input with carried state, the EOS-joined text stream and `load_data` (download, sample the corpus), truncated-BPTT batching, bits per character and sampling.
+- `src/training/wlm/model.py`: the word LM, OpenSLR's pruned trigram over the same LM text (downloaded by `data/librispeech.py`), read with KenLM and adapted to score one word at a time; also word perplexity and OOV rate on a test set. Needs the `wlm` extra (KenLM, built from source: `uv sync --extra wlm`, with `CC=clang CXX=clang++` under a uv-managed Python; not on Windows, where its tests skip).
+- `src/training/decode/`: the decoder. `beam.py` is CTC prefix beam search fused with the CM and the WLM (the paper's N-best search), plain Python so it runs anywhere; `runtime/` has a line-for-line copy. `golden.py` writes the golden case both copies must reproduce (`shared/golden/decode/`). `run.py` is what the decode notebook uses: loading the checkpoints, AM log-probs over a test set, the CM in torch behind the search's interface, WER/CER and the grid search over the LM weights.
+- `notebooks/decode.ipynb`: the decode Colab launcher (load an AM and a CM run from Drive, decode dev-clean, tune the LM weights, report greedy / beam / + CM / + WLM / + both, save the results to Drive).
 
 A new LSTM model goes the same way: subclass `LstmNet`, hand `lstm.train.fit` its losses and its evaluation, and `export` works on it as is.
 
-The later stages (word-LM, decoding, activation and cell quantization, the integer reference model) haven't started.
+The later stages (activation and cell quantization, the integer reference model) haven't started.

@@ -1,0 +1,39 @@
+
+\data\
+ngram 1=10
+ngram 2=10
+ngram 3=6
+
+\1-grams:
+-1.0	</s>
+-99	<s>	-0.5
+-2.0	<unk>
+-1.5	A	-0.3
+-1.2	CAT	-0.4
+-1.6	HAT	-0.4
+-1.4	MAT	-0.4
+-1.3	ON	-0.4
+-1.3	SAT	-0.4
+-0.9	THE	-0.3
+
+\2-grams:
+-0.4	<s> THE	-0.2
+-0.7	A CAT
+-0.4	CAT SAT	-0.2
+-0.8	HAT SAT
+-0.3	MAT </s>
+-0.3	ON THE	-0.2
+-0.3	SAT ON	-0.2
+-0.6	THE CAT	-0.2
+-1.0	THE HAT
+-0.7	THE MAT	-0.2
+
+\3-grams:
+-0.3	<s> THE CAT
+-0.2	CAT SAT ON
+-0.2	ON THE MAT
+-0.2	SAT ON THE
+-0.2	THE CAT SAT
+-0.1	THE MAT </s>
+
+\end\

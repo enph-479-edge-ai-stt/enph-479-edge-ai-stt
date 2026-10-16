@@ -20,6 +20,13 @@ dependencies = [
     "soundfile>=0.12",
 ]
 
+[project.optional-dependencies]
+# The word LM, for decoding (training.wlm, the golden decode case). Optional because
+# kenlm has no wheels and builds from source, which fails on Windows; `uv sync --extra
+# wlm` on Linux. With a uv-managed Python, build it with clang (`CC=clang CXX=clang++`):
+# that Python passes a clang-only flag that gcc rejects. Its tests skip without it.
+wlm = ["kenlm>=0.3"]
+
 [dependency-groups]
 # Dev tooling only. torch and torchaudio (the heavy ML stack this stage needs)
 # are deliberately NOT locked here: on Colab they are preinstalled, and locally

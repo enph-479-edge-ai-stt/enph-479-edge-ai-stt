@@ -128,6 +128,12 @@ wheels = [
 ]
 
 [[package]]
+name = "kenlm"
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/6e/f4e159cef39ea4ef2244b4aa32857d447d60a5d0ee269e1b1f8d3723c03e/kenlm-0.3.0.tar.gz", hash = "sha256:c4628bb9fb63c8a6f9240035b8b037385cfc404cb72e933cf48878291edac1e8", size = 427500, upload-time = "2025-04-07T13:26:38.795Z" }
+
+[[package]]
 name = "numpy"
 version = "2.5.3"
 source = { registry = "https://pypi.org/simple" }
@@ -398,6 +404,11 @@ dependencies = [
     { name = "soundfile" },
 ]
 
+[package.optional-dependencies]
+wlm = [
+    { name = "kenlm" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
@@ -407,9 +418,11 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jiwer", specifier = ">=3.0" },
+    { name = "kenlm", marker = "extra == 'wlm'", specifier = ">=0.3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "soundfile", specifier = ">=0.12" },
 ]
+provides-extras = ["wlm"]
 
 [package.metadata.requires-dev]
 dev = [
