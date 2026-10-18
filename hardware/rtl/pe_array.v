@@ -14,7 +14,9 @@
 //  parameter DATA_ELEMENT_WIDTH = 8 - data element width
 //  parameter WEIGHT_INPUT_WIDTH = 6 - weight input width
 //  parameter BIAS_INPUT_WIDTH = 16 - bias input width
-//  parameter OUTPUT_ELEMENT_WIDTH = 16 - output element width
+//  parameter OUTPUT_ELEMENT_WIDTH = 24 - accumulator width
+//  Bias lanes are BIAS_INPUT_WIDTH bits and are sign-extended into
+//  the accumulator before load_bias.
 
 //
 // Ports:
@@ -37,7 +39,7 @@ module pe_array #(
     parameter DATA_ELEMENT_WIDTH = 8,
     parameter WEIGHT_INPUT_WIDTH = 6,
     parameter BIAS_INPUT_WIDTH = 16,
-    parameter OUTPUT_ELEMENT_WIDTH = 16
+    parameter OUTPUT_ELEMENT_WIDTH = 24
 ) (
     
     input wire clk,
@@ -60,7 +62,16 @@ module pe_array #(
     
     generate
         for (i = 0; i < PE_ARRAY_SIZE; i = i + 1) begin: pe_array_loop
-            
+            wire signed [BIAS_INPUT_WIDTH-1:0] bias0_lane;
+            wire signed [BIAS_INPUT_WIDTH-1:0] bias1_lane;
+            wire signed [OUTPUT_ELEMENT_WIDTH-1:0] bias0_ext;
+            wire signed [OUTPUT_ELEMENT_WIDTH-1:0] bias1_ext;
+
+            assign bias0_lane = bias_input0[i * BIAS_INPUT_WIDTH +: BIAS_INPUT_WIDTH];
+            assign bias1_lane = bias_input1[i * BIAS_INPUT_WIDTH +: BIAS_INPUT_WIDTH];
+            assign bias0_ext = bias0_lane;
+            assign bias1_ext = bias1_lane;
+
             pe_unit #(
                 //Common parameters
 
@@ -78,7 +89,7 @@ module pe_array #(
 
                 //Individual inputs
                 .weight(weight_input0[i * WEIGHT_INPUT_WIDTH +: WEIGHT_INPUT_WIDTH]),
-                .bias(bias_input0[i * BIAS_INPUT_WIDTH   +: BIAS_INPUT_WIDTH]),
+                .bias(bias0_ext),
                 .pe_out(pe_out0[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH])            
                 );
             
@@ -99,7 +110,7 @@ module pe_array #(
 
                 //Individual inputs
                 .weight(weight_input1[i * WEIGHT_INPUT_WIDTH +: WEIGHT_INPUT_WIDTH]),
-                .bias(bias_input1[i * BIAS_INPUT_WIDTH   +: BIAS_INPUT_WIDTH]),
+                .bias(bias1_ext),
                 .pe_out(pe_out1[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH])            
                 );
         
