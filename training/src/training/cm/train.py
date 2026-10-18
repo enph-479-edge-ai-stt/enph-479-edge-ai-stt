@@ -40,15 +40,20 @@ class TrainConfig(lstm.TrainConfig):
     keep: float = 0.05  # fraction of the LM text's sentences to train on
 
 
-def load_data(data_dir: str | Path, cfg: TrainConfig) -> dict[str, np.ndarray]:
-    """Download the LM text and dev-clean to ``data_dir`` and build what ``train`` takes.
+def load_data(
+    data_dir: str | Path, cache_dir: str | Path, cfg: TrainConfig
+) -> dict[str, np.ndarray]:
+    """Get the LM text and dev-clean into ``data_dir`` and build what ``train`` takes.
 
+    The archives come from ``cache_dir`` on Drive, which the first run fills from OpenSLR.
     Streams the corpus (1.5 GB gzip, kept gzipped) once to sample ``cfg.keep`` of its
     sentences, and tests on dev-clean's transcripts, which the LM text excludes. Both sides
     become EOS-joined index streams.
     """
-    train_sents = sample_sentences(download_lm_text(data_dir), keep=cfg.keep)
-    dev_sents = [text for _, text in list_utterances(download_subset("dev-clean", data_dir))]
+    train_sents = sample_sentences(download_lm_text(data_dir, cache_dir), keep=cfg.keep)
+    dev_sents = [
+        text for _, text in list_utterances(download_subset("dev-clean", data_dir, cache_dir))
+    ]
     streams = {"train": to_stream(train_sents), "test": to_stream(dev_sents)}
     print(f"train {len(train_sents):,} sentences, {len(streams['train']):,} chars")
     print(f"dev {len(dev_sents):,} sentences, {len(streams['test']):,} chars")
