@@ -1,7 +1,7 @@
 """CTC training of the acoustic model, on the shared loop in ``lstm/train.py``.
 
-This module supplies what is the AM's own: its data loaders, the CTC loss, and greedy
-test CER as the per-epoch evaluation.
+This module supplies what is the AM's own: its data loaders, the CTC loss, and the test
+loss and greedy test CER as the per-epoch evaluation.
 """
 
 from __future__ import annotations
@@ -51,16 +51,26 @@ def load_data(
 
 
 @torch.no_grad()
-def greedy_cer(model: AcousticModel, loader: DataLoader, device: torch.device) -> float:
-    """Dev CER of per-frame argmax -> CTC collapse, no language model (gate V1)."""
+def loss_and_cer(
+    model: AcousticModel, loader: DataLoader, ctc: nn.CTCLoss, device: torch.device
+) -> tuple[float, float]:
+    """Dev CTC loss and greedy CER, in one pass over ``loader``.
+
+    The loss is the mean over batches, like the training loss it is logged next to, but
+    with dropout off. The CER is of per-frame argmax -> CTC collapse, no language model
+    (gate V1).
+    """
     model.eval()
+    loss_sum = 0.0
     refs: list[str] = []
     hyps: list[str] = []
     for feats, feat_len, labels, label_len in loader:
-        pred = model(feats.to(device), feat_len).argmax(-1).cpu()
+        logp = model(feats.to(device), feat_len)  # [B, T, N]
+        loss_sum += ctc(logp.transpose(0, 1), labels.to(device), feat_len, label_len).item()
+        pred = logp.argmax(-1).cpu()
         hyps += [vocab.collapse(p[:n].tolist()) for p, n in zip(pred, feat_len, strict=True)]
         refs += [vocab.decode(lab.tolist()) for lab in labels.split(label_len.tolist())]
-    return float(jiwer.cer(refs, hyps))
+    return loss_sum / len(loader), float(jiwer.cer(refs, hyps))
 
 
 def train(
@@ -69,7 +79,7 @@ def train(
     log_path: str | Path,
     init_state: dict[str, torch.Tensor] | None = None,
 ) -> AcousticModel:
-    """Train on all of ``datasets["train"]``; after each epoch, log CER on all of ``"test"``.
+    """Train on all of ``datasets["train"]``; after each epoch, log loss and CER on ``"test"``.
 
     Each role is a list of datasets in any format, pooled together. A dataset only has to
     yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
@@ -96,13 +106,17 @@ def train(
             # CTCLoss wants [T, B, N]; the length vectors stay on the CPU.
             yield ctc(logp.transpose(0, 1), labels.to(device), feat_len, label_len)
 
+    def evaluate() -> str:
+        loss, cer = loss_and_cer(model, test_loader, ctc, device)
+        return f"test loss {loss:.3f}, test CER {cer:.4f}"
+
     lstm.fit(
         model,
         cfg,
         losses,
         len(train_loader),
         lambda loss: f"train loss {loss:.3f}",
-        lambda: f"test CER {greedy_cer(model, test_loader, device):.4f}",
+        evaluate,
         log_path,
         init_state,
     )
