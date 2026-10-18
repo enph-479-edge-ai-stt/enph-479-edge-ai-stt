@@ -117,6 +117,7 @@ def test_a_run_trains_fine_tunes_and_saves(tiny, tmp_path, monkeypatch):
     log = Path("train.log").read_text(encoding="utf-8")
     assert "[epoch 3]" in log
     assert net is am or "sample:" in log  # the CM prints a sampled line every epoch
+    assert net is cm or "test loss" in log  # the AM logs its test loss next to the CER
     for name, w in qmodel.named_parameters():
         if "weight" in name:  # 6 bits: integers in [-31, 31] times one step per matrix
             assert w.unique().numel() <= 63, name
