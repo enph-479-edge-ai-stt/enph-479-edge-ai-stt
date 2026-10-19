@@ -6,6 +6,7 @@ loss and greedy test CER as the per-epoch evaluation.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,9 @@ class TrainConfig(lstm.TrainConfig):
     """Hyperparameters for one training run."""
 
     dropout: float = 0.2
-    num_workers: int = 2
+    # Features are extracted on the fly in the DataLoader workers, and that, not the GPU,
+    # sets the pace, so use every core the runtime has (8 on Colab's High-RAM T4, 2 without).
+    num_workers: int = os.cpu_count()
 
 
 def load_data(
