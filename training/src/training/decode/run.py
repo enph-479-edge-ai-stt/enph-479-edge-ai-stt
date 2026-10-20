@@ -8,6 +8,7 @@ time; the CM's steps are batched across the beam.
 from __future__ import annotations
 
 import itertools
+import os
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -54,9 +55,12 @@ def am_log_probs(
     mean: torch.Tensor,
     std: torch.Tensor,
     batch_size: int = 32,
-    num_workers: int = 2,
+    num_workers: int = os.cpu_count(),
 ) -> list[np.ndarray]:
-    """Per-frame AM log-probs ``[T, V]`` for every utterance in ``items``, in order."""
+    """Per-frame AM log-probs ``[T, V]`` for every utterance in ``items``, in order.
+
+    Features are extracted on the fly, one worker per CPU core, same as AM training.
+    """
     device = next(model.parameters()).device
     loader = DataLoader(
         LibriSpeechFeatures(items, mean, std),
