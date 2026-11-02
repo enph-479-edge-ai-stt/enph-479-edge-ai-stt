@@ -1,4 +1,4 @@
-"""Get LibriSpeech audio subsets and LM text into a local dir (e.g. /content).
+"""Get LibriSpeech audio subsets, LM text and word LM into a local dir (e.g. /content).
 
 Each archive comes from a cache dir on Google Drive if it is there. Otherwise it is
 downloaded from OpenSLR and copied into the cache, so only the first session downloads.
@@ -16,13 +16,17 @@ from pathlib import Path
 OPENSLR_12 = "https://www.openslr.org/resources/12"
 OPENSLR_11 = "https://www.openslr.org/resources/11"
 LM_TEXT = "librispeech-lm-norm.txt.gz"
+WORD_LM = "3-gram.pruned.1e-7.arpa.gz"
 
 # Audio subsets from https://www.openslr.org/resources/12/md5sum.txt. OpenSLR 11
-# publishes no checksums; the LM text's was computed from a download on 2026-10-01.
+# publishes no checksums; the LM text's was computed from a download on 2026-10-01,
+# the word LM's on 2026-10-15.
 MD5 = {
     "dev-clean.tar.gz": "42e2234ba48799c1f50f24a7926300a1",
+    "test-clean.tar.gz": "32fa31d27d2e1cad72775fee3f4849a9",
     "train-clean-100.tar.gz": "2a93770f6d5c6c964bc36631d331a522",
     LM_TEXT: "c83c64c726a1aedfe65f80aa311de402",
+    WORD_LM: "9a0f1325bcaf3a0f7b7be4be10823c2a",
 }
 
 
@@ -85,19 +89,36 @@ def download_subset(subset: str, dest: str | Path, cache: str | Path) -> Path:
     return out
 
 
+def _download_file(name: str, dest: str | Path, cache: str | Path) -> Path:
+    """Fetch and md5-check one OpenSLR 11 file into ``dest``; return its path.
+
+    Skips everything if the file is already in ``dest`` and checks out.
+    """
+    dest = Path(dest)
+    path = dest / name
+    if path.is_file() and _md5(path) == MD5[name]:
+        return path
+
+    t0 = time.perf_counter()
+    _fetch(OPENSLR_11, name, dest, Path(cache))
+    print(f"{name} ready at {path} ({time.perf_counter() - t0:.0f}s)", flush=True)
+    return path
+
+
 def download_lm_text(dest: str | Path, cache: str | Path) -> Path:
     """Fetch and md5-check the normalized LM text (1.5 GB gzip); return its path.
 
     One upper-case sentence per line, from ~14.5K books with the dev/test books
     excluded. Stays gzipped: it is ~4.3 GB extracted and is only ever streamed.
-    Skips everything if the file is already in ``dest`` and checks out.
     """
-    dest = Path(dest)
-    gz = dest / LM_TEXT
-    if gz.is_file() and _md5(gz) == MD5[LM_TEXT]:
-        return gz
+    return _download_file(LM_TEXT, dest, cache)
 
-    t0 = time.perf_counter()
-    _fetch(OPENSLR_11, LM_TEXT, dest, Path(cache))
-    print(f"{gz.name} ready at {gz} ({time.perf_counter() - t0:.0f}s)", flush=True)
-    return gz
+
+def download_word_lm(dest: str | Path, cache: str | Path) -> Path:
+    """Fetch and md5-check the word LM (34 MB gzip ARPA); return its path.
+
+    OpenSLR's trigram over the same LM text (so dev/test books excluded), pruned at
+    1e-7: 200K words, 2.5M bigrams, 1.1M trigrams, upper case like the transcripts.
+    KenLM reads the gzipped ARPA directly, in about a second.
+    """
+    return _download_file(WORD_LM, dest, cache)

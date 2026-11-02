@@ -16,7 +16,7 @@ import torch
 from torch import nn
 from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
-from training import vocab
+from shared import vocab
 from training.am.dataset import LibriSpeechFeatures, collate, compute_cmvn_over, list_utterances
 from training.am.model import AcousticModel
 from training.data.librispeech import download_subset

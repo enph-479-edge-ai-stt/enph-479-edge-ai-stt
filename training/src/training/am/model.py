@@ -10,9 +10,9 @@ from __future__ import annotations
 import torch
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from shared.vocab import VOCAB_SIZE
 from training.features.fbank import FEATURE_DIM
 from training.lstm.model import LstmNet
-from training.vocab import VOCAB_SIZE
 
 
 class AcousticModel(LstmNet):

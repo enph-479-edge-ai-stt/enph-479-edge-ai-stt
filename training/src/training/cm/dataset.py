@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from training import vocab
+from shared import vocab
 
 # Byte -> vocab index. Newline stands in for EOS while joining; 255 marks out-of-vocab.
 _OOV = 255

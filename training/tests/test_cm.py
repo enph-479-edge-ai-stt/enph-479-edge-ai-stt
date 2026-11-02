@@ -17,7 +17,7 @@ torch = pytest.importorskip("torch")
 
 from conftest import SENTENCES  # noqa: E402
 
-from training import vocab  # noqa: E402
+from shared import vocab  # noqa: E402
 from training.cm.dataset import sample_sentences, to_stream  # noqa: E402
 from training.cm.model import CharModel  # noqa: E402
 from training.cm.train import _chunks, _streams, bits_per_char  # noqa: E402

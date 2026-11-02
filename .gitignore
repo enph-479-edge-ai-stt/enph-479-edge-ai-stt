@@ -30,6 +30,8 @@ wandb/
 *.arpa
 *.arpa.gz
 *.klm
+# ... except the decoder golden case's 26-n-gram toy LM
+!/shared/golden/**/*.arpa
 
 # --- FPGA build junk ---
 *.bit
