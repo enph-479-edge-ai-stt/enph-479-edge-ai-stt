@@ -16,6 +16,8 @@ class LstmNet(nn.Module):
     """LSTM stack ``lstm`` and output layer ``proj``."""
 
     x_frac: int  # the fabric gets a layer-0 input as an integer at scale 2**-x_frac
+    lstm_frac: int  # a 6-bit LSTM weight is its integer * 2**-lstm_frac
+    proj_frac: int  # a 6-bit output-layer weight is its integer * 2**-proj_frac
 
     def __init__(
         self, n_in: int, n_hidden: int, n_layers: int, n_out: int, dropout: float = 0.0

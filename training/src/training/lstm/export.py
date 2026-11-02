@@ -21,8 +21,6 @@ import torch
 from training.lstm.model import LstmNet
 
 WEIGHT_BITS = 6  # signed: integers in [-31, 31]
-LSTM_FRAC = 7  # an LSTM weight is its integer * 2**-7
-PROJ_FRAC = 6  # an output-layer weight is its integer * 2**-6
 H_FRAC = 7  # a hidden state is its int8 * 2**-7
 BIAS_BITS = 24  # signed, at the scale of the accumulator it preloads
 
@@ -79,15 +77,15 @@ def export(model: LstmNet, out_dir: str | Path, name: str, **extra: object) -> N
         # bias per gate where nn.LSTM has two, so they add.
         w = torch.cat([sd[f"lstm.weight_ih_l{layer}"], sd[f"lstm.weight_hh_l{layer}"]], dim=1)
         b = sd[f"lstm.bias_ih_l{layer}"] + sd[f"lstm.bias_hh_l{layer}"]
-        w = _integers(w, LSTM_FRAC).view(4, hidden, -1)
-        b = torch.round(b * 2 ** (LSTM_FRAC + H_FRAC)).long().view(4, hidden)
+        w = _integers(w, model.lstm_frac).view(4, hidden, -1)
+        b = torch.round(b * 2 ** (model.lstm_frac + H_FRAC)).long().view(4, hidden)
         for gates in PASSES:
             rows += _pass_rows(w[list(gates)], b[list(gates)])
     # The output layer runs on the first n_out PEs of array 0; every other PE gets zeros.
     w = torch.zeros(2, hidden, hidden, dtype=torch.long)
     b = torch.zeros(2, hidden, dtype=torch.long)
-    w[0, :n_out] = _integers(sd["proj.weight"], PROJ_FRAC)
-    b[0, :n_out] = torch.round(sd["proj.bias"] * 2 ** (PROJ_FRAC + H_FRAC)).long()
+    w[0, :n_out] = _integers(sd["proj.weight"], model.proj_frac)
+    b[0, :n_out] = torch.round(sd["proj.bias"] * 2 ** (model.proj_frac + H_FRAC)).long()
     rows += _pass_rows(w, b)
 
     manifest = {
@@ -96,6 +94,8 @@ def export(model: LstmNet, out_dir: str | Path, name: str, **extra: object) -> N
         "n_layers": model.lstm.num_layers,
         "n_out": n_out,
         "x_frac": model.x_frac,
+        "lstm_frac": model.lstm_frac,
+        "proj_frac": model.proj_frac,
         "rows": len(rows),
         **extra,
     }

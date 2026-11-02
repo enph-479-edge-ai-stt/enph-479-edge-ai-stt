@@ -19,6 +19,8 @@ class AcousticModel(LstmNet):
     """Deep unidirectional LSTM acoustic model with a CTC output head."""
 
     x_frac = 5  # CMVN'd features reach about +-4, so the fabric gets them as int8 / 32
+    lstm_frac = 7  # +-0.24: under 0.1% of a trained AM's LSTM weights fall outside
+    proj_frac = 6  # +-0.48: about 2% of its output weights fall outside
 
     def __init__(
         self,

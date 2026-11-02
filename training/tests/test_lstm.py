@@ -39,8 +39,12 @@ def _unpack(words, width):
     return torch.tensor([v - 2**width if v >= 2 ** (width - 1) else v for v in vals])
 
 
-@pytest.mark.parametrize("net", [AcousticModel, CharModel], ids=["am", "cm"])
-def test_export_packs_the_model_by_the_memory_map(net, tmp_path):
+@pytest.mark.parametrize(
+    ("net", "lstm_frac", "proj_frac"),
+    [(AcousticModel, 7, 6), (CharModel, 4, 3)],
+    ids=["am", "cm"],
+)
+def test_export_packs_the_model_by_the_memory_map(net, lstm_frac, proj_frac, tmp_path):
     model = net(n_hidden=32, n_layers=2)
     with pytest.raises(ValueError, match="6-bit grid"):
         export(model, tmp_path, "net")
@@ -67,13 +71,15 @@ def test_export_packs_the_model_by_the_memory_map(net, tmp_path):
             weights = take(w.shape[1], 6).transpose(1, 2)  # [array, PE, input]
             for array, gate in enumerate(gates):
                 block = slice(32 * gate, 32 * gate + 32)
-                assert torch.equal(bias[array], torch.round(b[block] * 2**14).long())
-                assert torch.equal(weights[array], (w[block] * 2**7).long())
+                scale = 2 ** (lstm_frac + 7)
+                assert torch.equal(bias[array], torch.round(b[block] * scale).long())
+                assert torch.equal(weights[array], (w[block] * 2**lstm_frac).long())
     bias = take(4, 24).reshape(2, 32)
     weights = take(32, 6).transpose(1, 2)
     n_out = model.proj.out_features
-    assert torch.equal(bias[0, :n_out], torch.round(sd["proj.bias"] * 2**13).long())
-    assert torch.equal(weights[0, :n_out], (sd["proj.weight"] * 2**6).long())
+    scale = 2 ** (proj_frac + 7)
+    assert torch.equal(bias[0, :n_out], torch.round(sd["proj.bias"] * scale).long())
+    assert torch.equal(weights[0, :n_out], (sd["proj.weight"] * 2**proj_frac).long())
     assert not bias[0, n_out:].any() and not weights[0, n_out:].any()
     assert not bias[1].any() and not weights[1].any()
     assert next(rows, None) is None
@@ -82,7 +88,24 @@ def test_export_packs_the_model_by_the_memory_map(net, tmp_path):
     assert manifest["rows"] * 12 == len(words)
     assert manifest["n_in"] == model.lstm.input_size
     assert manifest["x_frac"] == model.x_frac
+    assert manifest["lstm_frac"] == lstm_frac
+    assert manifest["proj_frac"] == proj_frac
     assert manifest["note"] == "kept"
+
+
+@pytest.mark.parametrize(
+    ("net", "lstm_limit", "proj_limit"),
+    [(AcousticModel, 31 / 128, 31 / 64), (CharModel, 31 / 16, 31 / 8)],
+    ids=["am", "cm"],
+)
+def test_quantize_clips_at_the_models_own_limits(net, lstm_limit, proj_limit):
+    model = net(n_hidden=32, n_layers=2)
+    with torch.no_grad():
+        for w in model.parameters():
+            w.fill_(100.0)
+    _quantize(model, _weight_steps(model))
+    assert model.lstm.weight_hh_l0.max() == lstm_limit
+    assert model.proj.weight.max() == proj_limit
 
 
 @pytest.fixture(params=["am", "cm"])
