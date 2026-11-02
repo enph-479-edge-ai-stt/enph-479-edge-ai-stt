@@ -23,6 +23,7 @@ WORD_LM = "3-gram.pruned.1e-7.arpa.gz"
 # the word LM's on 2026-10-15.
 MD5 = {
     "dev-clean.tar.gz": "42e2234ba48799c1f50f24a7926300a1",
+    "test-clean.tar.gz": "32fa31d27d2e1cad72775fee3f4849a9",
     "train-clean-100.tar.gz": "2a93770f6d5c6c964bc36631d331a522",
     LM_TEXT: "c83c64c726a1aedfe65f80aa311de402",
     WORD_LM: "9a0f1325bcaf3a0f7b7be4be10823c2a",

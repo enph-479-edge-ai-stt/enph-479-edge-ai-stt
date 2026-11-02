@@ -18,14 +18,14 @@ dependencies = [
     "jiwer>=3.0",
     "numpy>=1.26",
     "soundfile>=0.12",
+    # The vocab and the decoder, which the runtime runs too (../shared, see [tool.uv.sources]).
+    "stt-shared",
 ]
 
 [project.optional-dependencies]
-# The word LM, for decoding (training.wlm, the golden decode case). Optional because
-# kenlm has no wheels and builds from source, which fails on Windows; `uv sync --extra
-# wlm` on Linux. With a uv-managed Python, build it with clang (`CC=clang CXX=clang++`):
-# that Python passes a clang-only flag that gcc rejects. Its tests skip without it.
-wlm = ["kenlm>=0.3"]
+# The word LM, for decoding (shared's wlm extra: kenlm, built from source, see
+# shared/pyproject.toml).
+wlm = ["stt-shared[wlm]"]
 
 [dependency-groups]
 # Dev tooling only. torch and torchaudio (the heavy ML stack this stage needs)
@@ -38,6 +38,9 @@ dev = [
     "ruff>=0.8.0",
     "pytest>=8.0",
 ]
+
+[tool.uv.sources]
+stt-shared = { path = "../shared", editable = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -74,7 +77,8 @@ convention = "google"
 "notebooks/**" = ["D100", "D103"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["training"]
+# shared is our own package (a dependency), so it sorts with training, not third party.
+known-first-party = ["shared", "training"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

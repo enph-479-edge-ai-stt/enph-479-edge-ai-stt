@@ -13,8 +13,8 @@ from __future__ import annotations
 import torch
 from torch.nn import functional as F
 
+from shared.vocab import VOCAB_SIZE
 from training.lstm.model import LstmNet
-from training.vocab import VOCAB_SIZE
 
 State = tuple[torch.Tensor, torch.Tensor]
 

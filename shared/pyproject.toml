@@ -1,9 +1,10 @@
 [project]
-name = "stt-runtime"
+name = "stt-shared"
 version = "0.1.0"
-description = "ENPH 479 STT — the program on the Kria KV260's ARM cores: feeds the fabric, decodes its output with the char-LM and word-LM."
+description = "ENPH 479 STT — the code training and the runtime both run: the vocab and the decoder (CTC beam search with the char-LM and word LM)."
 readme = "README.md"
-# The board's Python: Ubuntu 22.04 for Kria, and the Kria-PYNQ venv on top of it.
+# The board's Python (Ubuntu 22.04 for Kria) is the oldest that imports this; training
+# runs it on 3.12.
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -17,10 +18,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# The word LM. The board needs it; it is optional because kenlm has no wheels and
-# builds from source, which fails on Windows. `uv sync --extra wlm` on Linux. With a
-# uv-managed Python, build it with clang (`CC=clang CXX=clang++`): that Python passes
-# a clang-only flag that gcc rejects. The tests that need it skip without it.
+# The word LM. Optional because kenlm has no wheels and builds from source, which fails
+# on Windows; `uv sync --extra wlm` on Linux. With a uv-managed Python, build it with
+# clang (`CC=clang CXX=clang++`): that Python passes a clang-only flag that gcc rejects.
+# The tests that need it skip without it.
 wlm = ["kenlm>=0.3"]
 
 [dependency-groups]
@@ -34,8 +35,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-# src layout: the importable package is runtime/src/runtime/ -> `runtime`.
-packages = ["src/runtime"]
+# src layout: the importable package is shared/src/shared/ -> `shared`.
+packages = ["src/shared"]
 
 [tool.ruff]
 line-length = 100
@@ -60,7 +61,7 @@ convention = "google"
 "tests/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["runtime"]
+known-first-party = ["shared"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

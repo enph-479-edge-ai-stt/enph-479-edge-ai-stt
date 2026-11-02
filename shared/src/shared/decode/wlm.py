@@ -1,12 +1,11 @@
-"""KenLM trigram -> the decoder's word-LM interface.
+"""KenLM trigram -> the decoder's word-LM interface, plus word perplexity on a test set.
 
 The decoder scores a word when a hypothesis completes it (a space, or the end of the
 utterance) and carries a KenLM state per hypothesis. While a word is being spelled it
 asks whether any word in the LM starts that way, so a non-word pays its penalty as soon
 as it can't be a word any more. Scores are natural log; KenLM's are log10.
 
-``training/src/training/wlm/model.py`` is this adapter again (it also has the word
-perplexity training reports); both are checked against ``shared/golden/decode/``.
+Part of ``shared/golden/decode/``: regenerate the case after a change here.
 """
 
 from __future__ import annotations
@@ -73,3 +72,15 @@ class KenLM:
     def end(self, state: kenlm.State) -> float:
         """Log-prob of the sentence ending after ``state`` (``</s>``)."""
         return self.model.BaseScore(state, "</s>", kenlm.State()) * _LN10
+
+
+def perplexity(lm: KenLM, sentences: list[str]) -> tuple[float, float]:
+    """Word perplexity over ``sentences`` (``</s>`` counted, OOV penalty not), and OOV rate."""
+    logp = 0.0
+    n_words = n_oov = 0
+    for sentence in sentences:
+        words = sentence.split()
+        logp += lm.model.score(sentence)  # log10, with <s> and </s>
+        n_words += len(words)
+        n_oov += sum(w not in lm.model for w in words)
+    return 10 ** (-logp / (n_words + len(sentences))), n_oov / n_words

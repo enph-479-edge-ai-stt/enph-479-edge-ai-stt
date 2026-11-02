@@ -1,6 +1,6 @@
-"""Character vocabulary for the acoustic model and CTC decoding.
+"""Character vocabulary for the acoustic model, the char-LM and CTC decoding.
 
-PROVISIONAL until ``shared/specs`` is frozen. LibriSpeech transcripts contain
+PROVISIONAL until it is frozen. LibriSpeech transcripts contain
 only A-Z, space and apostrophe; with an end-of-sentence marker and the CTC
 blank that is 30 symbols. The blank is index 0 (``nn.CTCLoss``'s default).
 Changing this mapping invalidates every trained checkpoint.

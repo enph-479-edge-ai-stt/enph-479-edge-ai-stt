@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("kenlm")
 
-from training.decode.golden import GOLDEN_DIR  # noqa: E402
-from training.wlm.model import KenLM, perplexity  # noqa: E402
+from shared.decode.golden import GOLDEN_DIR  # noqa: E402
+from shared.decode.wlm import KenLM, perplexity  # noqa: E402
 
 LN10 = math.log(10)
 

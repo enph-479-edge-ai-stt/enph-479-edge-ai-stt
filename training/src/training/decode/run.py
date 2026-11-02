@@ -1,8 +1,10 @@
 """Decoding a test set end to end: AM log-probs, the CM in torch, WER, tuning the LM weights.
 
-The AM runs once over the whole set; its log-probs are kept so the beam search can be
-rerun with other weights without it. The search runs on the CPU, one utterance at a
-time; the CM's steps are batched across the beam.
+This is the runtime's pipeline with torch on the GPU standing in for the fabric: the AM
+gets the int8 features the fabric will, and the search (``shared.decode``) is the one
+the board runs. The AM runs once over the whole set; its log-probs are kept so the beam
+search can be rerun with other weights without it. The search runs on the CPU, one
+utterance at a time; the CM's steps are batched across the beam.
 """
 
 from __future__ import annotations
@@ -18,11 +20,11 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from training import vocab
+from shared import vocab
+from shared.decode.beam import CharLM, Config, WordLM, beam_search
 from training.am.dataset import LibriSpeechFeatures, Utterance, collate
 from training.am.model import AcousticModel
 from training.cm.model import CharModel, State
-from training.decode.beam import CharLM, Config, WordLM, beam_search
 
 
 def log(log_path: str | Path, msg: str) -> None:
@@ -48,6 +50,12 @@ def load_models(
     return am.to(device).eval(), cm.to(device).eval(), am_ckpt["cmvn_mean"], am_ckpt["cmvn_std"]
 
 
+def int8_features(feats: torch.Tensor, x_frac: int) -> torch.Tensor:
+    """CMVN'd features as the fabric gets them: int8 at step ``2**-x_frac``, back in float."""
+    scale = 2.0**x_frac
+    return torch.round(feats * scale).clamp(-128, 127) / scale
+
+
 @torch.no_grad()
 def am_log_probs(
     model: AcousticModel,
@@ -59,7 +67,8 @@ def am_log_probs(
 ) -> list[np.ndarray]:
     """Per-frame AM log-probs ``[T, V]`` for every utterance in ``items``, in order.
 
-    Features are extracted on the fly, one worker per CPU core, same as AM training.
+    Features are extracted on the fly, one worker per CPU core, same as AM training, then
+    rounded to int8 (``int8_features``) as the runtime will send them to the fabric.
     """
     device = next(model.parameters()).device
     loader = DataLoader(
@@ -71,6 +80,7 @@ def am_log_probs(
     model.eval()
     out: list[np.ndarray] = []
     for feats, feat_len, _, _ in loader:
+        feats = int8_features(feats, model.x_frac)
         logp = model(feats.to(device), feat_len).cpu().numpy()
         out += [lp[:n] for lp, n in zip(logp, feat_len.tolist(), strict=True)]
     return out

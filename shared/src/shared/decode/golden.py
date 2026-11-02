@@ -1,13 +1,13 @@
 """Write the decoder's golden case, ``shared/golden/decode/case.json``.
 
-Training's beam search is the reference; ``runtime/`` must reproduce its output from
-the same inputs. The inputs are synthetic: AM log-probs for a noisy "THE CAT SAT ON THE
-MAT", a bigram table standing in for the CM (``TableCharLM``) and the tiny trigram
-``words.arpa`` next to the case as the word LM. The case decodes them three ways (no
-LM, word LM only, both) and stores each final beam.
+It pins the search's output, so the board (another Python, another libm) can check it
+decodes the same: same N-best, same scores. The inputs are synthetic: AM log-probs for a
+noisy "THE CAT SAT ON THE MAT", a bigram table standing in for the CM (``TableCharLM``)
+and the tiny trigram ``words.arpa`` next to the case as the word LM. The case decodes
+them three ways (no LM, word LM only, both) and stores each final beam.
 
-Run ``python -m training.decode.golden`` after any change to the search, then check that
-``runtime/`` still passes against the new case.
+Run ``python -m shared.decode.golden`` (with the ``wlm`` extra) after any change to the
+search or the word-LM adapter.
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ from pathlib import Path
 
 import numpy as np
 
-from training import vocab
-from training.decode.beam import Config, beam_search
+from shared import vocab
+from shared.decode.beam import Config, beam_search
 
-GOLDEN_DIR = Path(__file__).resolve().parents[4] / "shared" / "golden" / "decode"
+GOLDEN_DIR = Path(__file__).resolve().parents[3] / "golden" / "decode"
 SENTENCE = "THE CAT SAT ON THE MAT"
 CASES = {
     "am": (Config(beam=8), False, False),
@@ -82,7 +82,7 @@ def make_inputs(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
 
 def main(out_dir: Path = GOLDEN_DIR) -> None:
     """Decode the inputs every way in ``CASES`` and write the case file."""
-    from training.wlm.model import KenLM  # here, so the tests can import this without kenlm
+    from shared.decode.wlm import KenLM  # here, so the tests can import this without kenlm
 
     am, table = make_inputs()
     cm = TableCharLM(table.tolist())

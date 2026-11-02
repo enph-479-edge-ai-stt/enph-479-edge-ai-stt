@@ -16,12 +16,12 @@ part, a prefix that runs on without spaces (one long non-word) would put off eve
 cost to the end and win. A space can't start a transcript or follow another space.
 
 The LMs come in through small interfaces (``CharLM``, ``WordLM``), so the same search
-runs the CM in torch here and on the fabric on the board, and runs with either LM left
-out. The search itself is plain Python floats, no torch.
+runs the CM in torch in training and on the fabric on the board, and runs with either LM
+left out. The search itself is plain Python floats, no torch, so it runs on the board's
+Python too.
 
-``runtime/src/runtime/decode/beam.py`` is this file again, line for line: the verticals
-share no code. Both must reproduce ``shared/golden/decode/``; change them together and
-regenerate the case with ``python -m training.decode.golden``.
+``shared/golden/decode/`` pins its output: after a change here, regenerate the case with
+``python -m shared.decode.golden``.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from training import vocab
+from shared import vocab
 
 NEG_INF = -math.inf
 

@@ -15,7 +15,7 @@ pytest.importorskip("torchaudio")
 
 from conftest import TEXTS, write_subset  # noqa: E402
 
-from training import vocab  # noqa: E402
+from shared import vocab  # noqa: E402
 from training.am.dataset import (  # noqa: E402
     LibriSpeechFeatures,
     collate,
