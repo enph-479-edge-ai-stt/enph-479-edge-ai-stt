@@ -23,6 +23,8 @@ class CharModel(LstmNet):
     """Deep unidirectional LSTM character language model."""
 
     x_frac = 0  # one-hot: the fabric gets the current character's input as the integer 1
+    lstm_frac = 4  # +-1.94: a trained CM's weights are far larger than the AM's
+    proj_frac = 3  # +-3.88
 
     def __init__(self, n_vocab: int = VOCAB_SIZE, n_hidden: int = 256, n_layers: int = 2) -> None:
         """Build the LSTM stack (one-hot input) and the linear projection to next-char logits."""
