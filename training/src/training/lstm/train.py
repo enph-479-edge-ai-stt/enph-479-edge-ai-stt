@@ -18,7 +18,7 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from training.lstm.export import LSTM_FRAC, PROJ_FRAC, WEIGHT_BITS
+from training.lstm.export import WEIGHT_BITS
 from training.lstm.model import LstmNet
 
 
@@ -44,13 +44,13 @@ def _log(log_path: Path, msg: str) -> None:
 
 
 def _weight_steps(model: LstmNet) -> dict[str, float]:
-    """Per weight matrix, its step size on the FPGA (the fixed-point formats in ``export``).
+    """Per weight matrix, its step size on the FPGA (the model's ``lstm_frac`` and ``proj_frac``).
 
     Powers of two, and the same for a layer's input and hidden weights: the fabric sums
     both products in one accumulator and rescales with a shift.
     """
     return {
-        name: 2.0 ** -(PROJ_FRAC if name.startswith("proj") else LSTM_FRAC)
+        name: 2.0 ** -(model.proj_frac if name.startswith("proj") else model.lstm_frac)
         for name, _ in model.named_parameters()
         if "weight" in name
     }
