@@ -25,6 +25,7 @@ MD5 = {
     "dev-clean.tar.gz": "42e2234ba48799c1f50f24a7926300a1",
     "test-clean.tar.gz": "32fa31d27d2e1cad72775fee3f4849a9",
     "train-clean-100.tar.gz": "2a93770f6d5c6c964bc36631d331a522",
+    "train-clean-360.tar.gz": "c0e676e450a7ff2f54aeade5171606fa",
     LM_TEXT: "c83c64c726a1aedfe65f80aa311de402",
     WORD_LM: "9a0f1325bcaf3a0f7b7be4be10823c2a",
 }
