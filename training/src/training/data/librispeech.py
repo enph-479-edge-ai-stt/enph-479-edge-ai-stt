@@ -13,7 +13,9 @@ import tarfile
 import time
 from pathlib import Path
 
-OPENSLR_12 = "https://www.openslr.org/resources/12"
+# OpenSLR's EU mirror for the audio: from Colab the main server ran at 0.8 MB/s on
+# 2026-11-03 (8 hours for train-clean-360), the mirror at 55 MB/s.
+OPENSLR_12 = "https://openslr.elda.org/resources/12"
 OPENSLR_11 = "https://www.openslr.org/resources/11"
 LM_TEXT = "librispeech-lm-norm.txt.gz"
 WORD_LM = "3-gram.pruned.1e-7.arpa.gz"
