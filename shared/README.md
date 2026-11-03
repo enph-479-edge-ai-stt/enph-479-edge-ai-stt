@@ -8,7 +8,7 @@ Cross-vertical specs, golden vectors, and the code more than one vertical runs.
   - `vocab.py`: the 30-symbol character vocab (provisional). Changing it invalidates every trained checkpoint.
   - `decode/beam.py`: CTC prefix beam search fused with the char-LM and the word LM (the paper's N-best search), plain Python. The readable reference: it writes the golden case, and the C++ search below is a port of it.
   - `decode/beam_cpp*.so`: the C++ search, built from `cpp/` (not in git). The one that runs: `decode.ipynb` decodes with it, with the models in torch, and the board will with them on the fabric. About 7x faster than `beam.py` on the board's A53s (0.14x against 0.96x real time at beam 128), with the same N-best and scores.
-  - `decode/wlm.py`: OpenSLR's pruned trigram through KenLM, a word at a time, and word perplexity on a test set.
+  - `decode/wlm.py`: OpenSLR's trigram through KenLM, a word at a time, and word perplexity on a test set.
   - `decode/golden.py`: writes `golden/decode/`.
 
 - `cpp/`: `beam_cpp.cpp`, the port of `decode/beam.py` and `decode/wlm.py` with KenLM's query code compiled in (a pybind11 module, same `beam_search(logp, cfg, cm, wlm)` call; its `WordLM(arpa)` stands in for `KenLM`), and `build.sh`, which builds it into `src/shared/decode/`. Needs g++, zlib, pybind11 and the kenlm-0.3.0 sdist: `PYTHON=<python> cpp/build.sh <kenlm source dir>`, about 2 minutes on the board, less on a PC. It keeps `beam.py`'s order of floating-point operations, so on one machine the two return exactly the same output.
