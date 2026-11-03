@@ -1,11 +1,10 @@
 """Run the runtime pipeline on the board's CPU and time each stage.
 
-FLAC -> features -> int8 -> AM (numpy stand-in) -> log-softmax -> beam search with the
-CM (numpy stand-in) and KenLM -> text. Takes the first ``--n`` of the 500 test-clean
-utterances ``decode.ipynb`` evaluated on (same seed), so the error rates are comparable
-with its run, ``runs/20261102-2019-decode``. The stand-ins' time is reported apart from
-the ARM's: on the board the LSTMs run on the fabric. ``--search py`` swaps the C++ search
-(``shared.decode.beam_cpp``) for the Python one it was ported from.
+FLAC -> features -> int8 -> AM (numpy stand-in) -> log-softmax -> beam search
+(``shared.decode.beam_cpp``) with the CM (numpy stand-in) and KenLM -> text. Takes the
+first ``--n`` of the 500 test-clean utterances ``decode.ipynb`` evaluated on (same seed),
+so the error rates are comparable with its run, ``runs/20261102-2019-decode``. The
+stand-ins' time is reported apart from the ARM's: on the board the LSTMs run on the fabric.
 
     python bench.py --n 10
 """
@@ -27,8 +26,7 @@ from standin import AcousticModel, CharModel, log_softmax
 
 from shared import vocab
 from shared.decode import beam_cpp
-from shared.decode.beam import Config, beam_search
-from shared.decode.wlm import KenLM
+from shared.decode.beam import Config
 
 # decode.ipynb drew its 100 tuning utterances from dev-clean (2,703 of them) before the
 # 500 test-clean ones, from the same Random(0).
@@ -65,7 +63,6 @@ def main() -> None:
     p.add_argument("--n", type=int, default=10)
     p.add_argument("--beam", type=int, default=128)
     p.add_argument("--root", type=Path, default=Path.home() / "stt-proto")
-    p.add_argument("--search", choices=("cpp", "py"), default="cpp")
     args = p.parse_args()
     cfg = Config(beam=args.beam, alpha=0.5, beta=0.5, gamma=2.0)  # decode run's tuned weights
 
@@ -75,10 +72,7 @@ def main() -> None:
     cm = CharModel(dict(np.load(args.root / "models/cm.npz")))
     arpa = args.root / "data/3-gram.pruned.1e-7.arpa.gz"
     t0 = time.perf_counter()
-    if args.search == "cpp":
-        wlm, search = beam_cpp.WordLM(str(arpa)), beam_cpp.beam_search
-    else:
-        wlm, search = KenLM(arpa), beam_search
+    wlm = beam_cpp.WordLM(str(arpa))
     print(f"KenLM loaded in {time.perf_counter() - t0:.1f} s, peak RSS {rss_mb():.0f} MB")
 
     items = eval_sample(list_utterances(args.root / "data/LibriSpeech/test-clean"))[: args.n]
@@ -99,7 +93,7 @@ def main() -> None:
         t5 = time.perf_counter()
         cm.standin_s = 0.0
         cm.steps = cm.calls = 0
-        hyp = search(logp, cfg, cm, wlm)[0][0]
+        hyp = beam_cpp.beam_search(logp, cfg, cm, wlm)[0][0]
         t6 = time.perf_counter()
         t["read"], t["features"], t["int8"] = t1 - t0, t2 - t1, t3 - t2
         t["am_standin"], t["log_softmax"] = t4 - t3, t5 - t4
@@ -132,7 +126,7 @@ def main() -> None:
 
     audio = sum(r["audio_s"] for r in rows)
     total = {s: sum(r[s] for r in rows) for s in stages}
-    print(f"\n{len(rows)} utterances, {audio:.1f} s of audio, beam {cfg.beam}, {args.search}")
+    print(f"\n{len(rows)} utterances, {audio:.1f} s of audio, beam {cfg.beam}")
     print(f"  peak RSS {rss_mb():.0f} MB")
     for s in stages:
         print(f"  {s:12s} {total[s]:8.2f} s   {total[s] / audio:7.3f}x real time")

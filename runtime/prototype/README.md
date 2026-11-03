@@ -9,8 +9,7 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `features.py`: the numpy port of `training/src/training/features/fbank.py`, plus CMVN and the int8 rounding the fabric takes. Real runtime code.
 - `standin.py`: the AM and the CM as float numpy LSTMs holding the 6-bit weights, as `decode.ipynb` runs them in torch. The CM goes behind the search's `CharLM` interface and counts its steps.
 - `export_npz.py`: a checkpoint (`am_6bit.pt`, `cm_6bit.pt`) to the `.npz` the stand-ins load. Runs on a PC with torch, since the board has none.
-- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON. `--search py` swaps the C++ search for the Python one.
-- `check_cpp.py`: the C++ and Python searches on real utterances, whole N-best lists compared.
+- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON.
 
 ## Setup on the board
 
@@ -50,7 +49,7 @@ Weights `runs/20261020-0142/am_6bit.pt` and `runs/20261102-0334-cm/cm_6bit.pt`; 
 
 **Same accuracy as Colab.** All 500 utterances (3,599 s of audio) with the C++ search: beam search with both LMs at 24.08% WER and 11.92% CER, equal to `runs/20261102-2019-decode` in every digit it logged. Greedy WER is equal too, and greedy CER is 18.386% against 18.387% (the int8 rounding differences below flip a character or two).
 
-**Correct.** Checked against training's torch code on 3 utterances, with a one-off script kept out of the repo (it imports `training/`, which `runtime/` may not): 4 of 237,513 int8 feature values differ by one step (float64 against float32 rounding at .5), the AM stand-in is within 3.5e-5 of torch in log-prob with the same greedy text, and the CM stand-in within 1.5e-5. The C++ search returns exactly the Python search's N-best and scores (`check_cpp.py`, 3 utterances, all 128 hypotheses each).
+**Correct.** Checked against training's torch code on 3 utterances, with a one-off script kept out of the repo (it imports `training/`, which `runtime/` may not): 4 of 237,513 int8 feature values differ by one step (float64 against float32 rounding at .5), the AM stand-in is within 3.5e-5 of torch in log-prob with the same greedy text, and the CM stand-in within 1.5e-5. On the same 3, the C++ search returned exactly the Python search's N-best and scores, all 128 hypotheses each, also checked with a one-off script.
 
 **Speed**, 10 utterances (60.9 s of audio), one A53 core:
 
