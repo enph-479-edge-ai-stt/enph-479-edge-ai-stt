@@ -1,7 +1,7 @@
 """The decoder's torch side: the CM behind the search's interface, and the notebook's helpers.
 
-The search itself and its golden case are tested in ``shared/``. These need torch and
-skip without it.
+The search itself and its golden case are tested in ``shared/``. These need torch and the
+built C++ search (``run`` decodes with it), and skip without them.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from shared.decode.beam import Config
 
 def test_torch_char_lm_steps_like_the_model():
     torch = pytest.importorskip("torch")
+    pytest.importorskip("shared.decode.beam_cpp")
     from training.cm.model import CharModel
     from training.decode.run import TorchCharLM
 
@@ -36,6 +37,7 @@ def test_torch_char_lm_steps_like_the_model():
 def test_notebook_helpers_end_to_end(tmp_path):
     """load_models -> am_log_probs -> tune, on the tiny synthetic subset, CPU."""
     torch = pytest.importorskip("torch")
+    pytest.importorskip("shared.decode.beam_cpp")
     pytest.importorskip("torchaudio")
     from conftest import TEXTS, write_subset
 
@@ -70,6 +72,7 @@ def test_notebook_helpers_end_to_end(tmp_path):
 
 def test_int8_features_round_and_clamp():
     torch = pytest.importorskip("torch")
+    pytest.importorskip("shared.decode.beam_cpp")
     from training.decode import run
 
     x = torch.tensor([0.01, 0.02, -1.0, 3.99, 4.5, -5.0])

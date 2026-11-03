@@ -1,10 +1,11 @@
 """Decoding a test set end to end: AM log-probs, the CM in torch, WER, tuning the LM weights.
 
 This is the runtime's pipeline with torch on the GPU standing in for the fabric: the AM
-gets the int8 features the fabric will, and the search (``shared.decode``) is the one
-the board runs. The AM runs once over the whole set; its log-probs are kept so the beam
-search can be rerun with other weights without it. The search runs on the CPU, one
-utterance at a time; the CM's steps are batched across the beam.
+gets the int8 features the fabric will, and the search is the one the board runs,
+``shared.decode.beam_cpp`` (the C++ port of ``shared.decode.beam``, built by
+``shared/cpp/build.sh``). The AM runs once over the whole set; its log-probs are kept so
+the beam search can be rerun with other weights without it. The search runs on the CPU,
+one utterance at a time; the CM's steps are batched across the beam.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ import torch
 from torch.utils.data import DataLoader
 
 from shared import vocab
-from shared.decode.beam import CharLM, Config, WordLM, beam_search
+from shared.decode.beam import CharLM, Config
+from shared.decode.beam_cpp import WordLM, beam_search
 from training.am.dataset import LibriSpeechFeatures, Utterance, collate
 from training.am.model import AcousticModel
 from training.cm.model import CharModel, State
