@@ -13,7 +13,9 @@ import tarfile
 import time
 from pathlib import Path
 
-OPENSLR_12 = "https://www.openslr.org/resources/12"
+# OpenSLR's EU mirror for the audio: from Colab the main server ran at 0.8 MB/s on
+# 2026-11-03 (8 hours for train-clean-360), the mirror at 55 MB/s.
+OPENSLR_12 = "https://openslr.elda.org/resources/12"
 # OpenSLR's EU mirror for the LM files: the main server ran at about 0.1 MB/s on
 # 2026-11-03, the mirror at 10 MB/s.
 OPENSLR_11 = "https://openslr.elda.org/resources/11"
@@ -27,6 +29,7 @@ MD5 = {
     "dev-clean.tar.gz": "42e2234ba48799c1f50f24a7926300a1",
     "test-clean.tar.gz": "32fa31d27d2e1cad72775fee3f4849a9",
     "train-clean-100.tar.gz": "2a93770f6d5c6c964bc36631d331a522",
+    "train-clean-360.tar.gz": "c0e676e450a7ff2f54aeade5171606fa",
     LM_TEXT: "c83c64c726a1aedfe65f80aa311de402",
     WORD_LM: "74cbb837e582378c26c602e1c8cbcb9c",
 }
