@@ -16,20 +16,22 @@ from pathlib import Path
 # OpenSLR's EU mirror for the audio: from Colab the main server ran at 0.8 MB/s on
 # 2026-11-03 (8 hours for train-clean-360), the mirror at 55 MB/s.
 OPENSLR_12 = "https://openslr.elda.org/resources/12"
-OPENSLR_11 = "https://www.openslr.org/resources/11"
+# OpenSLR's EU mirror for the LM files: the main server ran at about 0.1 MB/s on
+# 2026-11-03, the mirror at 10 MB/s.
+OPENSLR_11 = "https://openslr.elda.org/resources/11"
 LM_TEXT = "librispeech-lm-norm.txt.gz"
-WORD_LM = "3-gram.pruned.1e-7.arpa.gz"
+WORD_LM = "3-gram.arpa.gz"
 
 # Audio subsets from https://www.openslr.org/resources/12/md5sum.txt. OpenSLR 11
 # publishes no checksums; the LM text's was computed from a download on 2026-10-01,
-# the word LM's on 2026-10-15.
+# the word LM's on 2026-11-03.
 MD5 = {
     "dev-clean.tar.gz": "42e2234ba48799c1f50f24a7926300a1",
     "test-clean.tar.gz": "32fa31d27d2e1cad72775fee3f4849a9",
     "train-clean-100.tar.gz": "2a93770f6d5c6c964bc36631d331a522",
     "train-clean-360.tar.gz": "c0e676e450a7ff2f54aeade5171606fa",
     LM_TEXT: "c83c64c726a1aedfe65f80aa311de402",
-    WORD_LM: "9a0f1325bcaf3a0f7b7be4be10823c2a",
+    WORD_LM: "74cbb837e582378c26c602e1c8cbcb9c",
 }
 
 
@@ -118,10 +120,11 @@ def download_lm_text(dest: str | Path, cache: str | Path) -> Path:
 
 
 def download_word_lm(dest: str | Path, cache: str | Path) -> Path:
-    """Fetch and md5-check the word LM (34 MB gzip ARPA); return its path.
+    """Fetch and md5-check the word LM (759 MB gzip ARPA); return its path.
 
-    OpenSLR's trigram over the same LM text (so dev/test books excluded), pruned at
-    1e-7: 200K words, 2.5M bigrams, 1.1M trigrams, upper case like the transcripts.
-    KenLM reads the gzipped ARPA directly, in about a second.
+    OpenSLR's unpruned trigram over the same LM text (so dev/test books excluded):
+    200K words, 38.2M bigrams, 49.7M trigrams, upper case like the transcripts. KenLM
+    reads the gzipped ARPA directly, into about 1.8 GB of RAM (about 3 minutes on the
+    KV260).
     """
     return _download_file(WORD_LM, dest, cache)

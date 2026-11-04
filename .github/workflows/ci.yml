@@ -3,7 +3,8 @@ name: CI
 # Per-project jobs. training/ and shared/ are independent uv projects, so each job
 # runs in its project's directory and only runs when that project (or this file)
 # changes; training depends on shared, so a change to shared runs both. Add a filter
-# and a job per vertical as it grows Python code (runtime/ has none yet).
+# and a job per vertical as it grows Python code (runtime/ only has the board
+# prototype's scripts so far, with no tests).
 #
 # The workflow itself runs on every PR and the `changes` job decides which
 # vertical jobs run. Don't move the path filter back to `on.paths`: `training` is
@@ -95,6 +96,15 @@ jobs:
         env:
           CC: clang
           CXX: clang++
+
+      # The C++ port of the search (cpp/), so its tests hold it to the golden case as well.
+      # It compiles in KenLM's query code, from the sdist the wlm extra builds.
+      - name: Build the C++ beam search
+        run: |
+          curl -sSL "$KENLM_SDIST" | tar -xz -C "$RUNNER_TEMP"
+          uv run --frozen --with pybind11 bash cpp/build.sh "$RUNNER_TEMP/kenlm-0.3.0"
+        env:
+          KENLM_SDIST: https://files.pythonhosted.org/packages/02/6e/f4e159cef39ea4ef2244b4aa32857d447d60a5d0ee269e1b1f8d3723c03e/kenlm-0.3.0.tar.gz
 
       - name: Ruff lint
         run: uv run ruff check .
