@@ -1,8 +1,10 @@
 name: CI
 
-# Per-vertical jobs. Each vertical is an independent uv project, so its job runs
-# in that vertical's directory and only runs when that vertical (or this file)
-# changes. Add a filter and a job per vertical as it grows Python code.
+# Per-project jobs. training/ and shared/ are independent uv projects, so each job
+# runs in its project's directory and only runs when that project (or this file)
+# changes; training depends on shared, so a change to shared runs both. Add a filter
+# and a job per vertical as it grows Python code (runtime/ only has the board
+# prototype's scripts so far, with no tests).
 #
 # The workflow itself runs on every PR and the `changes` job decides which
 # vertical jobs run. Don't move the path filter back to `on.paths`: `training` is
@@ -22,6 +24,7 @@ jobs:
       pull-requests: read
     outputs:
       training: ${{ steps.filter.outputs.training }}
+      shared: ${{ steps.filter.outputs.shared }}
     steps:
       # PRs are diffed through the API; pushes to main are diffed with git, which needs the checkout.
       - uses: actions/checkout@v4
@@ -32,6 +35,10 @@ jobs:
           filters: |
             training:
               - "training/**"
+              - "shared/**"
+              - ".github/workflows/ci.yml"
+            shared:
+              - "shared/**"
               - ".github/workflows/ci.yml"
 
   training:
@@ -52,8 +59,52 @@ jobs:
 
       # No OneDrive on CI, so the default in-repo .venv is fine here.
       # Python 3.12.0 is pinned by training/.python-version and fetched by uv if missing.
-      - name: Sync (installs the dev group of ruff and pytest)
-        run: uv sync --frozen
+      # The wlm extra is kenlm, built from source with clang (uv's Python is clang-built
+      # and passes a flag gcc rejects), so the decoder's golden case runs here too.
+      - name: Sync (installs the dev group of ruff and pytest, and the wlm extra)
+        run: uv sync --frozen --extra wlm
+        env:
+          CC: clang
+          CXX: clang++
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest
+
+  shared:
+    needs: changes
+    if: needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shared
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "shared/uv.lock"
+
+      # Python 3.10 (the board's) is pinned by shared/.python-version, so this job is what
+      # checks the decoder still runs there. kenlm as in training.
+      - name: Sync (installs the dev group of ruff and pytest, and the wlm extra)
+        run: uv sync --frozen --extra wlm
+        env:
+          CC: clang
+          CXX: clang++
+
+      # The C++ port of the search (cpp/), so its tests hold it to the golden case as well.
+      # It compiles in KenLM's query code, from the sdist the wlm extra builds.
+      - name: Build the C++ beam search
+        run: |
+          curl -sSL "$KENLM_SDIST" | tar -xz -C "$RUNNER_TEMP"
+          uv run --frozen --with pybind11 bash cpp/build.sh "$RUNNER_TEMP/kenlm-0.3.0"
+        env:
+          KENLM_SDIST: https://files.pythonhosted.org/packages/02/6e/f4e159cef39ea4ef2244b4aa32857d447d60a5d0ee269e1b1f8d3723c03e/kenlm-0.3.0.tar.gz
 
       - name: Ruff lint
         run: uv run ruff check .

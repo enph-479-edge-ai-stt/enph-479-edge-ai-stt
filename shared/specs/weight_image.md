@@ -17,21 +17,27 @@ The weights are not part of the bitstream. They need UltraRAM (the AM alone is 8
 
 | Quantity | Format | Real value |
 |---|---|---|
-| LSTM weight | 6-bit signed, -31..31 | integer x 2^-7 |
-| Output-layer weight | 6-bit signed, -31..31 | integer x 2^-6 |
+| LSTM weight, AM | 6-bit signed, -31..31 | integer x 2^-7 |
+| LSTM weight, CM | 6-bit signed, -31..31 | integer x 2^-4 |
+| Output-layer weight, AM | 6-bit signed, -31..31 | integer x 2^-6 |
+| Output-layer weight, CM | 6-bit signed, -31..31 | integer x 2^-3 |
 | Hidden state h | 8-bit signed | integer x 2^-7 |
 | AM input feature | 8-bit signed | integer x 2^-5 |
 | CM input (one-hot character) | 1 for the current character, 0 elsewhere | integer x 2^0 |
-| LSTM accumulator and bias | 24-bit signed | integer x 2^-14 |
-| Output-layer accumulator and bias | 24-bit signed | integer x 2^-13 |
+| LSTM accumulator and bias, AM | 24-bit signed | integer x 2^-14 |
+| LSTM accumulator and bias, CM | 24-bit signed | integer x 2^-11 |
+| Output-layer accumulator and bias, AM | 24-bit signed | integer x 2^-13 |
+| Output-layer accumulator and bias, CM | 24-bit signed | integer x 2^-10 |
+
+The weight steps are per model because the CM's weights are far larger than the AM's: at the AM's steps, 46% of a trained CM's weights clip. The manifest gives each image's steps as `lstm_frac` and `proj_frac`. **The fabric has to take the activation's bit slice per model:** the same real pre-activation sits 3 bits higher in the AM's accumulator than in the CM's.
 
 A gate's pre-activation is one accumulator: the bias is preloaded, then one product is added per input.
 
-- Every h-phase product, and every product in layers above the first, is h times a weight: 2^-7 x 2^-7 = 2^-14, no shift.
+- Every h-phase product, and every product in layers above the first, is h times a weight: 2^-7 x 2^-`lstm_frac`, no shift. That is 2^-14 for the AM and 2^-11 for the CM.
 - **Layer 0's x-phase products are shifted left before adding**, because its inputs are not at h's scale. The shift is 7 minus the input's fractional bits (`x_frac` in the manifest):
   - AM: features at 2^-5, shift left 2.
   - CM: a one-hot 1 at 2^0, shift left 7. Only one input is nonzero, so the whole x-phase is one weight row shifted left 7.
-- Output layer: its inputs are the top layer's h, products at 2^-6 x 2^-7 = 2^-13, no shift.
+- Output layer: its inputs are the top layer's h, products at 2^-7 x 2^-`proj_frac`, no shift. That is 2^-13 for the AM and 2^-10 for the CM.
 
 `nn.LSTM` has two biases per gate. The image holds their sum, rounded to the accumulator's scale.
 
@@ -98,6 +104,7 @@ Rows go in address order. Each row is 96 words, least significant word first, so
 
 - `n_in`, `n_hidden`, `n_layers`, `n_out`: the model's dimensions.
 - `x_frac`: the fractional bits of the model's inputs as the fabric gets them (5 for the AM, 0 for the CM).
+- `lstm_frac`, `proj_frac`: the fractional bits of the LSTM and output-layer weights (7 and 6 for the AM, 4 and 3 for the CM).
 - `rows`: the image's size, for checking a load.
 - AM only, `cmvn_mean` and `cmvn_std`: 123 values each. The model's inputs are `(features - mean) / std`, and the int8 sent to the fabric is that x 2^`x_frac`, rounded and clamped to -128..127.
 

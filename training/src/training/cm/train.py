@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from training import vocab
+from shared import vocab
 from training.am.dataset import list_utterances
 from training.cm.dataset import sample_sentences, to_stream
 from training.cm.model import CharModel

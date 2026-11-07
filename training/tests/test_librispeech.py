@@ -62,3 +62,40 @@ def test_md5_mismatch_raises_and_deletes_tar(tmp_path, fake_wget, monkeypatch):
     assert not (dest / "mini.tar.gz").exists()
     assert not (cache / "mini.tar.gz").exists()
     assert not (dest / "LibriSpeech" / "mini").exists()
+
+
+@pytest.fixture
+def fake_wget_file(tmp_path, monkeypatch):
+    """Serve a small file instead of downloading one from OpenSLR 11."""
+    src = tmp_path / "src.gz"
+    src.write_bytes(b"a word lm")
+    calls = []
+
+    def run(cmd, **_):
+        calls.append(cmd)
+        shutil.copy(src, cmd[cmd.index("-O") + 1])
+
+    monkeypatch.setattr(ls.subprocess, "run", run)
+    monkeypatch.setitem(ls.MD5, ls.WORD_LM, ls._md5(src))
+    return calls
+
+
+def test_download_word_lm_downloads_then_skips(tmp_path, fake_wget_file):
+    dest, cache = tmp_path / "data", tmp_path / "cache"
+    path = ls.download_word_lm(dest, cache)
+    assert path == dest / ls.WORD_LM
+    assert path.read_bytes() == b"a word lm"
+    assert (cache / ls.WORD_LM).is_file()
+    assert fake_wget_file[0][-1] == f"{ls.OPENSLR_11}/{ls.WORD_LM}"
+
+    assert ls.download_word_lm(dest, cache) == path
+    assert len(fake_wget_file) == 1  # already there and checks out: no second download
+
+
+def test_download_word_lm_md5_mismatch_raises_and_deletes(tmp_path, fake_wget_file, monkeypatch):
+    monkeypatch.setitem(ls.MD5, ls.WORD_LM, "0" * 32)
+    dest, cache = tmp_path / "data", tmp_path / "cache"
+    with pytest.raises(RuntimeError, match="md5"):
+        ls.download_word_lm(dest, cache)
+    assert not (dest / ls.WORD_LM).exists()
+    assert not (cache / ls.WORD_LM).exists()

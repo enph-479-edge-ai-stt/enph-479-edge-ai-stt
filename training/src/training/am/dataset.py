@@ -13,7 +13,7 @@ import soundfile as sf
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from training import vocab
+from shared import vocab
 from training.features import fbank
 
 Utterance = tuple[Path, str]

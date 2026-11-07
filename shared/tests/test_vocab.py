@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from training import vocab
+from shared import vocab
 
 
 def test_blank_is_index_zero_and_size_is_30():
