@@ -1,10 +1,12 @@
 `timescale 1ns / 1ps
 
 // One LSTM layer through the tile, driven the way fsm_controller drives
-// it, for two timesteps. Random weights, biases, peepholes, inputs and
-// starting context. Checks:
-//   - every gate pre-activation against a software model, including the
-//     h_{t-1} phase that reads h from context memory (sel_in = 1)
+// it, for two timesteps. Random weights, biases, inputs and starting
+// context; the x-phase shift is 2 (the AM's) on step 0 and 7 (the CM's)
+// on step 1. Checks:
+//   - every gate pre-activation against a software model: x shifted by
+//     x_shift, and the h_{t-1} phase that reads h from context memory
+//     (sel_in = 1) unshifted
 //   - c_t and h_t for every neuron against a second lstm_epu fed with the
 //     model's gates (tb_lstm_epu covers the EPU arithmetic itself)
 //   - every context word afterwards: this layer's rewritten, others kept
@@ -14,17 +16,18 @@ module tb_lstm_tile;
     localparam PE = 4;
     localparam D = 3;                 // inputs from below
     localparam W_W = 6;
-    localparam B_W = 16;
+    localparam B_W = 24;
     localparam WEIGHT_DEPTH = 16;     // uses 2 * (D + PE) = 14
     localparam CONTEXT_DEPTH = 16;
     localparam N_LAYERS = 2;
-    localparam GL = 1;                // layer slot for bias and peephole
+    localparam GL = 1;                // layer slot for the biases
     localparam CTX = 8;               // this layer's context base
 
     reg clk = 0;
     reg rst = 1;
     reg pe_enable = 0, load_bias = 0, sel_in = 0;
     reg signed [7:0] d_in = 0;
+    reg [2:0] x_shift = 0;
     reg [3:0] weight_addr = 0;
     reg weight0_we = 0, weight1_we = 0;
     reg [PE*W_W-1:0] weight0_din = 0, weight1_din = 0;
@@ -33,9 +36,6 @@ module tb_lstm_tile;
     reg [PE*B_W-1:0] bias0_din = 0, bias1_din = 0;
     reg capture_gates = 0, gate_pair = 0;
     reg [1:0] neuron_addr = 0;
-    reg [2:0] peep_addr = 0;
-    reg peep_we = 0;
-    reg [23:0] peep_din = 0;
     reg [3:0] context_addr = 0;
     reg context_we = 0, context_use_ext = 0;
     reg [23:0] context_ext_din = 0;
@@ -49,10 +49,10 @@ module tb_lstm_tile;
     reg [PE*W_W-1:0] wm1 [0:WEIGHT_DEPTH-1];
     reg [PE*B_W-1:0] bm0 [0:2*N_LAYERS-1];
     reg [PE*B_W-1:0] bm1 [0:2*N_LAYERS-1];
-    reg [23:0] pm [0:N_LAYERS*PE-1];
     reg [23:0] ctxm [0:CONTEXT_DEPTH-1];
 
     reg signed [7:0] x [0:D-1];
+    reg signed [15:0] xs;
     reg signed [23:0] acc0 [0:PE-1];
     reg signed [23:0] acc1 [0:PE-1];
     reg signed [15:0] gi [0:PE-1];
@@ -63,7 +63,6 @@ module tb_lstm_tile;
     // Reference EPU, driven from the model.
     reg signed [15:0] r_c = 0;
     reg signed [63:0] r_gates = 0;
-    reg [23:0] r_peep = 0;
     wire signed [15:0] ref_c;
     wire signed [7:0] ref_h;
 
@@ -79,11 +78,11 @@ module tb_lstm_tile;
     ) dut (
         .clk(clk), .rst(rst),
         .pe_enable(pe_enable), .load_bias(load_bias), .sel_in(sel_in), .d_in(d_in),
+        .x_shift(x_shift),
         .weight_addr(weight_addr), .weight0_we(weight0_we), .weight1_we(weight1_we),
         .weight0_din(weight0_din), .weight1_din(weight1_din),
         .bias_addr(bias_addr), .bias_we(bias_we), .bias0_din(bias0_din), .bias1_din(bias1_din),
         .capture_gates(capture_gates), .gate_pair(gate_pair), .neuron_addr(neuron_addr),
-        .peep_addr(peep_addr), .peep_we(peep_we), .peep_din(peep_din),
         .context_addr(context_addr), .context_we(context_we),
         .context_use_ext(context_use_ext), .context_ext_din(context_ext_din),
         .c_t(c_t), .h_t(h_t), .context_dout(context_dout),
@@ -94,7 +93,6 @@ module tb_lstm_tile;
         .clk(1'b0), .rst(1'b0), .enable(1'b1),
         .old_hidden_state(r_c),
         .pe_input(r_gates),
-        .peephole_weight(r_peep),
         .hidden_state_output(ref_c),
         .output_state(ref_h)
     );
@@ -141,16 +139,6 @@ module tb_lstm_tile;
             @(negedge clk);
             bias_we = 0;
 
-            for (j = 0; j < N_LAYERS * PE; j = j + 1) begin
-                pm[j] = $random(seed);
-                @(negedge clk);
-                peep_addr = j;
-                peep_din = pm[j];
-                peep_we = 1;
-            end
-            @(negedge clk);
-            peep_we = 0;
-
             // Starting context through the external write port.
             for (j = 0; j < CONTEXT_DEPTH; j = j + 1) begin
                 ctxm[j] = $random(seed);
@@ -166,7 +154,8 @@ module tb_lstm_tile;
         end
     endtask
 
-    // Model of one pass: bias, D inputs from x, PE inputs of h from context.
+    // Model of one pass: bias, D inputs from x shifted left by x_shift,
+    // PE inputs of h from context.
     task model_pass;
         input integer pass;
         integer base;
@@ -176,8 +165,9 @@ module tb_lstm_tile;
                 acc0[n] = $signed(bm0[GL*2 + pass][n*B_W +: B_W]);
                 acc1[n] = $signed(bm1[GL*2 + pass][n*B_W +: B_W]);
                 for (k = 0; k < D; k = k + 1) begin
-                    acc0[n] = acc0[n] + x[k] * $signed(wm0[base + k][n*W_W +: W_W]);
-                    acc1[n] = acc1[n] + x[k] * $signed(wm1[base + k][n*W_W +: W_W]);
+                    xs = x[k] <<< x_shift;
+                    acc0[n] = acc0[n] + xs * $signed(wm0[base + k][n*W_W +: W_W]);
+                    acc1[n] = acc1[n] + xs * $signed(wm1[base + k][n*W_W +: W_W]);
                 end
                 for (k = 0; k < PE; k = k + 1) begin
                     acc0[n] = acc0[n] + $signed(ctxm[CTX + k][7:0])
@@ -269,12 +259,10 @@ module tb_lstm_tile;
                 @(negedge clk);
                 context_we = 0;
                 context_addr = CTX + n;
-                peep_addr = GL * PE + n;
                 neuron_addr = n;
                 @(negedge clk);
                 r_c = ctxm[CTX + n][23:8];
                 r_gates = {gc[n], go[n], gf[n], gi[n]};
-                r_peep = pm[GL * PE + n];
                 #1;
                 if (c_t !== ref_c || h_t !== ref_h) begin
                     $display("  t%0d n%0d: c_t %0d h_t %0d, expected %0d %0d",
@@ -319,6 +307,7 @@ module tb_lstm_tile;
 
         // Step 1 reads h_{t-1} that step 0 wrote.
         for (t = 0; t < 2; t = t + 1) begin
+            x_shift = (t == 0) ? 3'd2 : 3'd7;
             for (k = 0; k < D; k = k + 1)
                 x[k] = $random(seed);
             for (p = 0; p < 2; p = p + 1) begin

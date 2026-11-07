@@ -8,16 +8,20 @@
 //  preempt each other. Switching networks is a different weight base
 //  and context base; the datapath is not reconfigured.
 //
-//  Weight, bias, peephole, context, and projection reads are one
-//  cycle late. pe_enable and the output-tile enable are asserted on
-//  the cycle that data is valid, one step after the address is issued.
-//  The EPU is two cycles per neuron: present the context and peephole
-//  address, then write {c_t, h_t} on the next cycle with that same
-//  address still held.
+//  Weight, bias, context, and projection reads are one cycle late.
+//  pe_enable and the output-tile enable are asserted on the cycle that
+//  data is valid, one step after the address is issued. The EPU is two
+//  cycles per neuron: present the context address, then write
+//  {c_t, h_t} on the next cycle with that same address still held.
 //
 //  Layer 0 input is the frame (AM) or a one-hot character (LM).
 //  Later layers read the previous layer's h from context. Every layer
 //  then MACs h_{t-1} from that layer's own context.
+//
+//  x_shift is the job's layer-0 input shift, 7 - x_frac from the
+//  manifest (shared/specs/weight_image.md): 2 for the AM's features,
+//  7 for the LM's one-hot. The tile applies it only while sel_in = 0,
+//  which is layer 0's x-phase.
 //
 // Jobs:
 //  0 AM          3 layers, 123-d frame, context base 0
@@ -36,6 +40,8 @@ module fsm_controller #(
     parameter N_BEAMS = 128,
     parameter X_WIDTH = 8,
     parameter SCORE_WIDTH = 8,
+    parameter AM_X_SHIFT = 2,
+    parameter LM_X_SHIFT = 7,
     parameter MAX_DIM = (AM_IN > PE_COUNT)
         ? ((AM_IN > LM_IN) ? AM_IN : LM_IN)
         : ((PE_COUNT > LM_IN) ? PE_COUNT : LM_IN),
@@ -50,7 +56,6 @@ module fsm_controller #(
     parameter CONTEXT_AW = $clog2(CONTEXT_DEPTH),
     parameter N_LSTM_LAYERS = AM_LAYERS + LM_LAYERS,
     parameter BIAS_AW = $clog2(N_LSTM_LAYERS * 2),
-    parameter PEEP_AW = $clog2(N_LSTM_LAYERS * PE_COUNT),
     parameter NEURON_AW = (PE_COUNT <= 1) ? 1 : $clog2(PE_COUNT),
     parameter BEAM_W = (N_BEAMS <= 1) ? 1 : $clog2(N_BEAMS),
     parameter CHAR_W = (VOCAB <= 1) ? 1 : $clog2(VOCAB),
@@ -76,12 +81,12 @@ module fsm_controller #(
     output reg load_bias,
     output reg sel_in,
     output reg signed [X_WIDTH-1:0] d_in,
+    output reg [2:0] x_shift,
     output reg [WEIGHT_AW-1:0] weight_addr,
     output reg [BIAS_AW-1:0] bias_addr,
     output reg capture_gates,
     output reg gate_pair,
     output reg [NEURON_AW-1:0] neuron_addr,
-    output reg [PEEP_AW-1:0] peep_addr,
     output reg [CONTEXT_AW-1:0] context_addr,
     output reg context_we,
     output reg context_use_ext,
@@ -167,12 +172,12 @@ module fsm_controller #(
         load_bias = 0;
         sel_in = 0;
         d_in = d_pipe;
+        x_shift = is_lm ? LM_X_SHIFT[2:0] : AM_X_SHIFT[2:0];
         weight_addr = {WEIGHT_AW{1'b0}};
         bias_addr = {BIAS_AW{1'b0}};
         capture_gates = 0;
         gate_pair = pair;
         neuron_addr = {NEURON_AW{1'b0}};
-        peep_addr = {PEEP_AW{1'b0}};
         context_addr = {CONTEXT_AW{1'b0}};
         context_we = 0;
         context_use_ext = 0;
@@ -200,7 +205,6 @@ module fsm_controller #(
             end
             S_EPU_RD, S_EPU_WR: begin
                 context_addr = cur_ctx + n;
-                peep_addr = global_layer * PE_COUNT + n;
                 neuron_addr = n[NEURON_AW-1:0];
                 context_we = (state == S_EPU_WR);
             end
