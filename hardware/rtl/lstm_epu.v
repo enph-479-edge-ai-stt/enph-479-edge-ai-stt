@@ -4,19 +4,17 @@
 // Module: lstm_epu.v
 // Description:
 //  LSTM extra processing unit for one neuron. Combinational. The PE
-//  buffers supply the four gate pre-activations. This block adds the
-//  peephole terms, applies the sigmoid and tanh lookup tables, and
-//  produces the new cell and hidden state:
+//  buffers supply the four gate pre-activations. This block applies the
+//  sigmoid and tanh lookup tables and produces the new cell and hidden
+//  state of a standard LSTM (no peepholes, as nn.LSTM):
 //
-//    i = sigmoid(pe_i + c_prev * w_ci)
-//    f = sigmoid(pe_f + c_prev * w_cf)
+//    i = sigmoid(pe_i)
+//    f = sigmoid(pe_f)
 //    c_tilde = tanh(pe_c)
 //    c_t = f * c_prev + i * c_tilde
-//    o = sigmoid(pe_o + c_t * w_co)
+//    o = sigmoid(pe_o)
 //    h_t = o * tanh(c_t)
 //
-//  The output gate uses c_t, so it is computed after the cell update.
-//  w_ci, w_cf, w_co are packed in peephole_weight from MSB to LSB.
 //  Fixed-point scales are not frozen yet. The slices below match the
 //  previous alignment and will move when shared/specs pins them down.
 //
@@ -30,7 +28,6 @@
 // Ports:
 //  old_hidden_state     - c_{t-1}, 16-bit cell (not h)
 //  pe_input             - {pe_c, pe_o, pe_f, pe_i}, each PE_INPUT_WIDTH
-//  peephole_weight      - {w_ci, w_cf, w_co}
 //  hidden_state_output  - c_t
 //  output_state         - h_t
 //=====================================================================
@@ -38,7 +35,6 @@
 module lstm_epu #(
     parameter HIDDEN_STATE_WIDTH = 16,
     parameter PE_INPUT_WIDTH = 16,
-    parameter PEEPHOLE_WEIGHT_WIDTH = 24,
     parameter OUTPUT_ELEMENT_WIDTH = 8
 ) (
     input wire clk,
@@ -47,7 +43,6 @@ module lstm_epu #(
 
     input wire signed [HIDDEN_STATE_WIDTH-1:0] old_hidden_state,
     input wire signed [PE_INPUT_WIDTH*4-1:0] pe_input,
-    input wire signed [PEEPHOLE_WEIGHT_WIDTH-1:0] peephole_weight,
 
     output wire signed [HIDDEN_STATE_WIDTH-1:0] hidden_state_output,
     output wire signed [OUTPUT_ELEMENT_WIDTH-1:0] output_state
@@ -58,22 +53,11 @@ module lstm_epu #(
     wire signed [PE_INPUT_WIDTH-1:0] pe_input_o = pe_input[3*PE_INPUT_WIDTH-1:2*PE_INPUT_WIDTH];
     wire signed [PE_INPUT_WIDTH-1:0] pe_input_c = pe_input[4*PE_INPUT_WIDTH-1:3*PE_INPUT_WIDTH];
 
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] w_ci =
-        peephole_weight[PEEPHOLE_WEIGHT_WIDTH-1 -: OUTPUT_ELEMENT_WIDTH];
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] w_cf =
-        peephole_weight[PEEPHOLE_WEIGHT_WIDTH-OUTPUT_ELEMENT_WIDTH-1 -: OUTPUT_ELEMENT_WIDTH];
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] w_co =
-        peephole_weight[PEEPHOLE_WEIGHT_WIDTH-2*OUTPUT_ELEMENT_WIDTH-1 -: OUTPUT_ELEMENT_WIDTH];
-
-    // Sums are truncated to the LUT input width. [7:4] is the current index.
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] activation_i_input =
-        pe_input_i + old_hidden_state * w_ci;
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] activation_f_input =
-        pe_input_f + old_hidden_state * w_cf;
-
-    // Two's complement slice -> offset-binary LUT index.
-    wire [3:0] index_i = {~activation_i_input[7], activation_i_input[6:4]};
-    wire [3:0] index_f = {~activation_f_input[7], activation_f_input[6:4]};
+    // Two's complement slice -> offset-binary LUT index. [7:4] is the
+    // current index.
+    wire [3:0] index_i = {~pe_input_i[7], pe_input_i[6:4]};
+    wire [3:0] index_f = {~pe_input_f[7], pe_input_f[6:4]};
+    wire [3:0] index_o = {~pe_input_o[7], pe_input_o[6:4]};
     wire [3:0] index_c = {~pe_input_c[7], pe_input_c[6:4]};
 
     wire [OUTPUT_ELEMENT_WIDTH-1:0] sigmoid_i_out;
@@ -99,6 +83,16 @@ module lstm_epu #(
     ) sig_f (
         .index(index_f),
         .sigmoid_output(sigmoid_f_out)
+    );
+
+    sigmoid_lut #(
+        .LUT_BIT_WIDTH(8),
+        .LUT_PRECISION(16),
+        .INPUT_BIT_WIDTH(4),
+        .SIGMOID_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
+    ) sig_o (
+        .index(index_o),
+        .sigmoid_output(sigmoid_o_out)
     );
 
     tanh_lut #(
@@ -128,22 +122,7 @@ module lstm_epu #(
 
     assign hidden_state_output = f_term + i_times_c_tilde;
 
-    // Output-gate peephole sees the updated cell, not the candidate pre-activation.
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] activation_o_input =
-        pe_input_o + hidden_state_output * w_co;
-
-    wire [3:0] index_o = {~activation_o_input[7], activation_o_input[6:4]};
     wire [3:0] index_ct = {~hidden_state_output[11], hidden_state_output[10:8]};
-
-    sigmoid_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .SIGMOID_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) sig_o (
-        .index(index_o),
-        .sigmoid_output(sigmoid_o_out)
-    );
 
     wire signed [OUTPUT_ELEMENT_WIDTH-1:0] tanh_ct_out;
     tanh_lut #(
