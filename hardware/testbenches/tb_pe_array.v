@@ -7,9 +7,9 @@
 
 module tb_pe_array;
     localparam N = 256;
-    localparam X_W = 8;
+    localparam X_W = 16;              // as lstm_tile's PE_X_WIDTH
     localparam W_W = 6;
-    localparam B_W = 16;
+    localparam B_W = 24;
     localparam ACC_W = 24;
     localparam MAC_STEPS = 40;
 
@@ -128,7 +128,7 @@ module tb_pe_array;
         rst = 0;
 
         load_random_bias;
-        check_all("load_bias sign-extends 16-bit biases");
+        check_all("load_bias loads 24-bit biases");
 
         random_macs;
         check_all("random MACs match the model");

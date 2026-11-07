@@ -6,8 +6,8 @@
 //  One LSTM tile, one output tile, and the controller that switches
 //  them between the acoustic model and the character LM.
 //
-//  While idle or done, the host writes weights, biases, peepholes,
-//  the projection, and the next feature frame. context_dout follows
+//  While idle or done, the host writes weights, biases, the
+//  projection, and the next feature frame. context_dout follows
 //  host_context_addr one cycle later so a testbench can read state
 //  back. During a job those ports are ignored and the controller
 //  drives the tiles.
@@ -27,8 +27,10 @@ module sr_accelerator_top #(
     parameter N_BEAMS = 128,
     parameter X_WIDTH = 8,
     parameter W_WIDTH = 6,
-    parameter BIAS_WIDTH = 16,
+    parameter BIAS_WIDTH = 24,
     parameter SCORE_WIDTH = 8,
+    parameter AM_X_SHIFT = 2,
+    parameter LM_X_SHIFT = 7,
     parameter WEIGHT_DEPTH =
         ((AM_IN + PE_COUNT) * 2)
         + ((AM_LAYERS > 1) ? (AM_LAYERS - 1) : 0) * (PE_COUNT * 4)
@@ -39,7 +41,6 @@ module sr_accelerator_top #(
     parameter WEIGHT_AW = $clog2(WEIGHT_DEPTH),
     parameter CONTEXT_AW = $clog2(CONTEXT_DEPTH),
     parameter BIAS_AW = $clog2(N_LSTM_LAYERS * 2),
-    parameter PEEP_AW = $clog2(N_LSTM_LAYERS * PE_COUNT),
     parameter FRAME_AW = (AM_IN <= 1) ? 1 : $clog2(AM_IN),
     parameter BEAM_W = (N_BEAMS <= 1) ? 1 : $clog2(N_BEAMS),
     parameter CHAR_W = (VOCAB <= 1) ? 1 : $clog2(VOCAB),
@@ -71,10 +72,6 @@ module sr_accelerator_top #(
     input wire signed [PE_COUNT*BIAS_WIDTH-1:0] host_bias0_din,
     input wire signed [PE_COUNT*BIAS_WIDTH-1:0] host_bias1_din,
 
-    input wire host_peep_we,
-    input wire [PEEP_AW-1:0] host_peep_addr,
-    input wire signed [23:0] host_peep_din,
-
     input wire host_out_weight_we,
     input wire [OUT_AW-1:0] host_out_weight_addr,
     input wire [VOCAB*W_WIDTH-1:0] host_out_weight_din,
@@ -104,13 +101,13 @@ module sr_accelerator_top #(
 
     wire idle;
     wire signed [X_WIDTH-1:0] d_in;
+    wire [2:0] x_shift;
     wire signed [X_WIDTH-1:0] frame_elem;
     wire ctrl_pe_enable, ctrl_load_bias, ctrl_sel_in, ctrl_capture;
     wire ctrl_gate_pair, ctrl_context_we, ctrl_use_ext;
     wire ctrl_out_enable, ctrl_out_load, ctrl_out_bias_addr;
     wire [WEIGHT_AW-1:0] ctrl_weight_addr;
     wire [BIAS_AW-1:0] ctrl_bias_addr;
-    wire [PEEP_AW-1:0] ctrl_peep_addr;
     wire [CONTEXT_AW-1:0] ctrl_context_addr;
     wire [OUT_AW-1:0] ctrl_out_weight_addr;
     wire [NEURON_AW-1:0] ctrl_neuron_addr;
@@ -129,12 +126,13 @@ module sr_accelerator_top #(
         .N_BEAMS(N_BEAMS),
         .X_WIDTH(X_WIDTH),
         .SCORE_WIDTH(SCORE_WIDTH),
+        .AM_X_SHIFT(AM_X_SHIFT),
+        .LM_X_SHIFT(LM_X_SHIFT),
         .WEIGHT_DEPTH(WEIGHT_DEPTH),
         .CONTEXT_DEPTH(CONTEXT_DEPTH),
         .WEIGHT_AW(WEIGHT_AW),
         .CONTEXT_AW(CONTEXT_AW),
         .BIAS_AW(BIAS_AW),
-        .PEEP_AW(PEEP_AW),
         .OUT_AW(OUT_AW)
     ) ctrl (
         .clk(clk),
@@ -152,12 +150,12 @@ module sr_accelerator_top #(
         .load_bias(ctrl_load_bias),
         .sel_in(ctrl_sel_in),
         .d_in(d_in),
+        .x_shift(x_shift),
         .weight_addr(ctrl_weight_addr),
         .bias_addr(ctrl_bias_addr),
         .capture_gates(ctrl_capture),
         .gate_pair(ctrl_gate_pair),
         .neuron_addr(ctrl_neuron_addr),
-        .peep_addr(ctrl_peep_addr),
         .context_addr(ctrl_context_addr),
         .context_we(ctrl_context_we),
         .context_use_ext(ctrl_use_ext),
@@ -186,8 +184,6 @@ module sr_accelerator_top #(
     wire weight1_we = idle & host_weight1_we;
     wire [BIAS_AW-1:0] bias_addr = idle ? host_bias_addr : ctrl_bias_addr;
     wire bias_we = idle & host_bias_we;
-    wire [PEEP_AW-1:0] peep_addr = idle ? host_peep_addr : ctrl_peep_addr;
-    wire peep_we = idle & host_peep_we;
     wire [CONTEXT_AW-1:0] context_addr = idle ? host_context_addr : ctrl_context_addr;
     wire [OUT_AW-1:0] out_weight_addr = idle ? host_out_weight_addr : ctrl_out_weight_addr;
     wire out_weight_we = idle & host_out_weight_we;
@@ -211,8 +207,6 @@ module sr_accelerator_top #(
         .N_LSTM_LAYERS(N_LSTM_LAYERS),
         .BIAS_DEPTH(N_LSTM_LAYERS * 2),
         .BIAS_AW(BIAS_AW),
-        .PEEP_DEPTH(N_LSTM_LAYERS * PE_COUNT),
-        .PEEP_AW(PEEP_AW),
         .NEURON_AW(NEURON_AW)
     ) lstm (
         .clk(clk),
@@ -221,6 +215,7 @@ module sr_accelerator_top #(
         .load_bias(idle ? 1'b0 : ctrl_load_bias),
         .sel_in(idle ? 1'b0 : ctrl_sel_in),
         .d_in(d_in),
+        .x_shift(x_shift),
         .weight_addr(weight_addr),
         .weight0_we(weight0_we),
         .weight1_we(weight1_we),
@@ -233,9 +228,6 @@ module sr_accelerator_top #(
         .capture_gates(idle ? 1'b0 : ctrl_capture),
         .gate_pair(ctrl_gate_pair),
         .neuron_addr(ctrl_neuron_addr),
-        .peep_addr(peep_addr),
-        .peep_we(peep_we),
-        .peep_din(host_peep_din),
         .context_addr(context_addr),
         .context_we(idle ? 1'b0 : ctrl_context_we),
         .context_use_ext(idle ? 1'b0 : ctrl_use_ext),
