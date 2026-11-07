@@ -2,8 +2,8 @@
 
 // The EPU is combinational: set the inputs, wait, check c_t and h_t.
 // Covers the LUT index mapping (every entry of both tables), unsigned
-// sigmoid gates, the cell update, and that the gates see only their own
-// pre-activation (no peepholes).
+// sigmoid gates, the cell update, the peephole slots and the order of
+// the output gate.
 //
 // Bit slices are placeholders until shared/specs fixes the cell and
 // table formats: the gate index is pre-activation bits [7:4], tanh(c)
@@ -13,6 +13,7 @@
 module tb_lstm_epu;
     reg signed [15:0] c_prev = 0;
     reg signed [15:0] pe_i = 0, pe_f = 0, pe_o = 0, pe_c = 0;
+    reg signed [7:0] w_ci = 0, w_cf = 0, w_co = 0;
     wire signed [15:0] c_t;
     wire signed [7:0] h_t;
 
@@ -31,6 +32,7 @@ module tb_lstm_epu;
         .clk(1'b0), .rst(1'b0), .enable(1'b1),
         .old_hidden_state(c_prev),
         .pe_input({pe_c, pe_o, pe_f, pe_i}),
+        .peephole_weight({w_ci, w_cf, w_co}),
         .hidden_state_output(c_t),
         .output_state(h_t)
     );
@@ -143,16 +145,28 @@ module tb_lstm_epu;
         check_c(16'sd765, "cell for the h check");
         check_h(8'sh86, "h = low byte of o * tanh(c_t)");
 
-        // No peepholes: the cell must not leak into any gate. With all
-        // gates 0, c_t = 272 and c_t[11:8] = 1 -> tanh 97. o stays
-        // sigmoid(0) = 128, so h = low byte of 128 * 97 = 0x3080. A
-        // c_prev * w or c_t * w term would move i, f or o off 128.
+        // Peepholes. w_ci (bits 23:16) adds c_prev * w_ci to the i input:
+        // 16 * 7 = 0x70 -> i = 255. c_t = 128 * 16 >> 8 + 255 * 127.
+        set_gates(0, 0, 0, OPEN);
+        c_prev = 16'sd16;
+        w_ci = 8'sd7;
+        check_c(16'sd32393, "w_ci feeds the input gate");
+        w_ci = 0;
+
+        // w_cf (bits 15:8): f = 255, i * tanh(0) = 0. c_t = 255 * 16 >> 8.
+        set_gates(0, 0, 0, 0);
+        w_cf = 8'sd7;
+        check_c(16'sd15, "w_cf feeds the forget gate");
+        w_cf = 0;
+
+        // w_co (bits 7:0) must see c_t = 272, not c_prev = 544.
+        // c_t[11:8] = 1 -> tanh 97. o input 272 -> low byte 0x10 -> 186.
+        // 186 * 97 = 0x467A. With c_prev it would be 225 * 97 -> 0x41.
         c_prev = 16'sd544;
         set_gates(0, 0, 0, 0);
-        check_c(16'sd272, "i and f ignore c_prev");
-        check_h(8'sh80, "o ignores c_t");
-        c_prev = -16'sd30000;
-        check_c(-16'sd15000, "i and f ignore a large negative c_prev");
+        check_h(8'sh80, "w_co = 0: o = 128, 128 * 97 = 0x3080");
+        w_co = 8'sd1;
+        check_h(8'sh7A, "w_co uses the new c_t");
 
         if (errors == 0)
             $display("ALL CHECKS PASSED");

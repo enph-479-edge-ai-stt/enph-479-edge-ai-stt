@@ -29,7 +29,7 @@ module output_tile #(
     parameter N_JOBS = 2,
     parameter X_WIDTH = 8,
     parameter W_WIDTH = 6,
-    parameter BIAS_WIDTH = 24,
+    parameter BIAS_WIDTH = 16,
     parameter ACC_WIDTH = 24,
     parameter SCORE_WIDTH = 8,
     parameter SCORE_LSB = 0,

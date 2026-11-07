@@ -11,7 +11,7 @@ module tb_output_tile;
     localparam VOCAB = 5;
     localparam N_JOBS = 2;
     localparam W_W = 6;
-    localparam B_W = 24;
+    localparam B_W = 16;
     localparam ACC_W = 24;
     localparam S_W = 8;
     localparam DEPTH = HIDDEN * N_JOBS;

@@ -13,7 +13,7 @@
 //  parameter PE_ARRAY_SIZE - size of singular PE array
 //  parameter DATA_ELEMENT_WIDTH = 8 - data element width
 //  parameter WEIGHT_INPUT_WIDTH = 6 - weight input width
-//  parameter BIAS_INPUT_WIDTH = 24 - bias input width
+//  parameter BIAS_INPUT_WIDTH = 16 - bias input width
 //  parameter OUTPUT_ELEMENT_WIDTH = 24 - accumulator width
 //  Bias lanes are BIAS_INPUT_WIDTH bits and are sign-extended into
 //  the accumulator before load_bias.
@@ -38,7 +38,7 @@ module pe_array #(
     parameter PE_ARRAY_SIZE = 256,
     parameter DATA_ELEMENT_WIDTH = 8,
     parameter WEIGHT_INPUT_WIDTH = 6,
-    parameter BIAS_INPUT_WIDTH = 24,
+    parameter BIAS_INPUT_WIDTH = 16,
     parameter OUTPUT_ELEMENT_WIDTH = 24
 ) (
     
