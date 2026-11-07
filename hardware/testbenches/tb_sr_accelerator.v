@@ -1,12 +1,11 @@
 `timescale 1ns / 1ps
 
 // Whole accelerator at small sizes (4 PEs, 2-layer AM, 2-layer LM, two
-// beams) with random nonzero weights, biases and frames. A software
-// model follows every job with the controller's memory map: weight rows
-// per layer and pass, bias slots, context bases per layer and beam, the
-// projection block per job, and layer 0's x-phase shift (2 for the AM,
-// 7 for the LM). After every job each score and every context word is
-// checked.
+// beams) with random nonzero weights, biases, peepholes and frames. A
+// software model follows every job with the controller's memory map:
+// weight rows per layer and pass, bias and peephole slots, context bases
+// per layer and beam, the projection block per job. After every job each
+// score and every context word is checked.
 //
 // The model's EPU is a second lstm_epu instance (tb_lstm_epu checks the
 // EPU arithmetic), so this test is about sequencing and addressing.
@@ -23,9 +22,7 @@ module tb_sr_accelerator;
     localparam VOCAB = 5;
     localparam N_BEAMS = 2;
     localparam W_W = 6;
-    localparam B_W = 24;
-    localparam AM_X_SHIFT = 2;
-    localparam LM_X_SHIFT = 7;
+    localparam B_W = 16;
     localparam S_W = 8;
 
     localparam AM_WEIGHT_ROWS = (AM_IN + PE) * 2 + (AM_LAYERS - 1) * PE * 4;
@@ -37,6 +34,7 @@ module tb_sr_accelerator;
     localparam WEIGHT_AW = $clog2(WEIGHT_DEPTH);
     localparam CONTEXT_AW = $clog2(CONTEXT_DEPTH);
     localparam BIAS_AW = $clog2(N_LSTM * 2);
+    localparam PEEP_AW = $clog2(N_LSTM * PE);
     localparam FRAME_AW = $clog2(AM_IN);
     localparam BEAM_W = $clog2(N_BEAMS);
     localparam CHAR_W = $clog2(VOCAB);
@@ -68,6 +66,9 @@ module tb_sr_accelerator;
     reg [BIAS_AW-1:0] host_bias_addr = 0;
     reg [PE*B_W-1:0] host_bias0_din = 0;
     reg [PE*B_W-1:0] host_bias1_din = 0;
+    reg host_peep_we = 0;
+    reg [PEEP_AW-1:0] host_peep_addr = 0;
+    reg [23:0] host_peep_din = 0;
     reg host_out_weight_we = 0;
     reg [OUT_AW-1:0] host_out_weight_addr = 0;
     reg [VOCAB*W_W-1:0] host_out_weight_din = 0;
@@ -87,12 +88,13 @@ module tb_sr_accelerator;
     reg [PE*W_W-1:0] wm1 [0:WEIGHT_DEPTH-1];
     reg [PE*B_W-1:0] bm0 [0:2*N_LSTM-1];
     reg [PE*B_W-1:0] bm1 [0:2*N_LSTM-1];
+    reg [23:0] pm [0:N_LSTM*PE-1];
     reg [VOCAB*W_W-1:0] owm [0:2*PE-1];
     reg [VOCAB*B_W-1:0] obm [0:1];
     reg signed [7:0] frame_m [0:AM_IN-1];
     reg [23:0] ctxm [0:CONTEXT_DEPTH-1];
 
-    reg signed [15:0] xin [0:MAX_IN-1];
+    reg signed [7:0] xin [0:MAX_IN-1];
     reg signed [23:0] acc0 [0:PE-1];
     reg signed [23:0] acc1 [0:PE-1];
     reg signed [15:0] gi [0:PE-1];
@@ -105,6 +107,7 @@ module tb_sr_accelerator;
 
     reg signed [15:0] r_c = 0;
     reg signed [63:0] r_gates = 0;
+    reg [23:0] r_peep = 0;
     wire signed [15:0] ref_c;
     wire signed [7:0] ref_h;
 
@@ -121,8 +124,6 @@ module tb_sr_accelerator;
         .LM_IN(LM_IN),
         .VOCAB(VOCAB),
         .N_BEAMS(N_BEAMS),
-        .AM_X_SHIFT(AM_X_SHIFT),
-        .LM_X_SHIFT(LM_X_SHIFT),
         .WEIGHT_DEPTH(WEIGHT_DEPTH),
         .CONTEXT_DEPTH(CONTEXT_DEPTH)
     ) dut (
@@ -135,6 +136,8 @@ module tb_sr_accelerator;
         .host_weight0_din(host_weight0_din), .host_weight1_din(host_weight1_din),
         .host_bias_we(host_bias_we), .host_bias_addr(host_bias_addr),
         .host_bias0_din(host_bias0_din), .host_bias1_din(host_bias1_din),
+        .host_peep_we(host_peep_we), .host_peep_addr(host_peep_addr),
+        .host_peep_din(host_peep_din),
         .host_out_weight_we(host_out_weight_we),
         .host_out_weight_addr(host_out_weight_addr),
         .host_out_weight_din(host_out_weight_din),
@@ -149,6 +152,7 @@ module tb_sr_accelerator;
         .clk(1'b0), .rst(1'b0), .enable(1'b1),
         .old_hidden_state(r_c),
         .pe_input(r_gates),
+        .peephole_weight(r_peep),
         .hidden_state_output(ref_c),
         .output_state(ref_h)
     );
@@ -206,6 +210,16 @@ module tb_sr_accelerator;
             @(negedge clk);
             host_bias_we = 0;
 
+            for (i = 0; i < N_LSTM * PE; i = i + 1) begin
+                pm[i] = $random(seed);
+                @(negedge clk);
+                host_peep_addr = i;
+                host_peep_din = pm[i];
+                host_peep_we = 1;
+            end
+            @(negedge clk);
+            host_peep_we = 0;
+
             for (i = 0; i < 2 * PE; i = i + 1) begin
                 for (v = 0; v < VOCAB; v = v + 1)
                     owm[i][v*W_W +: W_W] = $random(seed);
@@ -257,15 +271,14 @@ module tb_sr_accelerator;
                 gl = is_lm ? AM_LAYERS + l : l;
                 ctx = is_lm ? (AM_CTX + beam * LM_CTX + l * PE) : (l * PE);
 
-                // Layer 0: frame or one-hot, shifted to h's scale.
-                // Above: this step's h from below, unshifted.
+                // Layer 0: frame or one-hot. Above: this step's h from below.
                 for (k = 0; k < rows_x; k = k + 1) begin
                     if (l != 0)
-                        xin[k] = $signed(ctxm[ctx - PE + k][7:0]);
+                        xin[k] = ctxm[ctx - PE + k][7:0];
                     else if (is_lm)
-                        xin[k] = (k == ch) ? (16'sd1 <<< LM_X_SHIFT) : 16'sd0;
+                        xin[k] = (k == ch) ? 8'sd1 : 8'sd0;
                     else
-                        xin[k] = frame_m[k] <<< AM_X_SHIFT;
+                        xin[k] = frame_m[k];
                 end
 
                 for (p = 0; p < 2; p = p + 1) begin
@@ -297,6 +310,7 @@ module tb_sr_accelerator;
                 for (n = 0; n < PE; n = n + 1) begin
                     r_c = ctxm[ctx + n][23:8];
                     r_gates = {gc[n], go[n], gf[n], gi[n]};
+                    r_peep = pm[gl * PE + n];
                     #1;
                     ctxm[ctx + n] = {ref_c, ref_h};
                 end
