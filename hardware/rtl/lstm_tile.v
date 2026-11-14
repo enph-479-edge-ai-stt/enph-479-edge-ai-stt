@@ -109,7 +109,9 @@ module lstm_tile #(
     wire signed [C_WIDTH-1:0] c_prev;
     wire [STATE_WIDTH-1:0] context_din;
 
+    (* ram_style = "distributed" *)
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias0_mem [0:BIAS_DEPTH-1];
+    (* ram_style = "distributed" *)
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias1_mem [0:BIAS_DEPTH-1];
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias0_q;
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias1_q;
