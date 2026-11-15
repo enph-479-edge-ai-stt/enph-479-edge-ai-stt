@@ -4,6 +4,9 @@ The first piece of the fabric driver: it finds the FPGA the way ``pynq.Overlay``
 reports its state. Nothing is written. No bitstream is loaded, no register is read or
 written and no memory is allocated, so it runs as the ``ubuntu`` user without sudo.
 
+PYNQ finds the FPGA only when XILINX_XRT is set. The board's PYNQ venv sets it at startup
+(``site-packages/xilinx_xrt.pth``), so this runs from any shell:
+
     /usr/local/share/pynq-venv/bin/python3 fabric.py
 """
 
@@ -12,12 +15,8 @@ from __future__ import annotations
 import os
 import sys
 
-# PYNQ registers the Zynq's FPGA only when XILINX_XRT is set. Login shells get it from
-# /etc/profile.d/pynq_venv.sh; `ssh kv260 '<cmd>'` and services don't.
-os.environ.setdefault("XILINX_XRT", "/usr")
-
-import pynq  # noqa: E402
-from pynq.pl_server import global_state  # noqa: E402
+import pynq
+from pynq.pl_server import global_state
 
 FPGA_MANAGER = "/sys/class/fpga_manager/fpga0"
 
