@@ -89,7 +89,7 @@ Board and chip facts below were checked against the AMD K26 product brief and th
 | Memory | 4 GB 64-bit DDR4, 16 GB eMMC, QSPI boot flash | Word-LM ARPA lives in DDR4 |
 | Carrier I/O | 4x USB 2.0/3.0, 1 GbE, DisplayPort/HDMI, microSD, 12 V jack | USB mic (no analog audio in), ethernet to the browser |
 
-**Flash and boot path.** Boot firmware (FSBL, PMU firmware, U-Boot) lives in QSPI on the SOM itself. The microSD carries Ubuntu 22.04 for Kria; Kria-PYNQ is installed on top (`sudo bash install.sh -b KV260`, JupyterLab on port 9090). The fabric is programmed from Linux, not over JTAG: `pynq.Overlay("design.bit")` calls the kernel FPGA Manager. PYNQ needs the `.bit` and the matching `.hwh` together, always scp both. AMD's `xmutil` is the alternative loader.
+**Flash and boot path.** Boot firmware (FSBL, PMU firmware, U-Boot) lives in QSPI on the SOM itself. The microSD carries Ubuntu 22.04 for Kria; Kria-PYNQ is installed on top (`sudo bash install.sh -b KV260`, JupyterLab on port 9090). The fabric is programmed from Linux, not over JTAG: `pynq.Overlay("design.bit")` calls the kernel FPGA Manager. PYNQ needs the `.bit` and the matching `.hwh` together, always scp both. AMD's `xmutil` is the alternative loader. PYNQ only finds the FPGA with `XILINX_XRT` set, which the board's PYNQ venv now does itself through a `.pth` file (see `runtime/README.md`, "Board setup").
 
 **Day-to-day loop:** build on the Linux box -> scp `.bit` + `.hwh` (and the runs' `am_fabric.*` and `cm_fabric.*`) to the board -> ssh or Jupyter -> `Overlay()` -> stream the weight images in over AXI-DMA -> stream frames -> read probabilities -> decode on ARM.
 
