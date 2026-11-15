@@ -5,7 +5,7 @@ reports its state. Nothing is written. No bitstream is loaded, no register is re
 written and no memory is allocated, so it runs as the ``ubuntu`` user without sudo.
 
 PYNQ finds the FPGA only when XILINX_XRT is set. The board's PYNQ venv sets it at startup
-(``site-packages/xilinx_xrt.pth``), so this runs from any shell:
+(``site-packages/pynq_env.pth``, see runtime/README.md), so this runs from any shell:
 
     /usr/local/share/pynq-venv/bin/python3 fabric.py
 """
