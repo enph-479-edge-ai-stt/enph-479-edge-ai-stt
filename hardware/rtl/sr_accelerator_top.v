@@ -31,6 +31,11 @@ module sr_accelerator_top #(
     parameter SCORE_WIDTH = 8,
     parameter AM_X_SHIFT = 2,
     parameter LM_X_SHIFT = 7,
+    // Gate slice: lstm_frac + 7 - 5. Score slice: proj_frac + 7 - 2.
+    parameter AM_GATE_SHIFT = 9,
+    parameter LM_GATE_SHIFT = 6,
+    parameter AM_SCORE_SHIFT = 11,
+    parameter LM_SCORE_SHIFT = 8,
     parameter WEIGHT_DEPTH =
         ((AM_IN + PE_COUNT) * 2)
         + ((AM_LAYERS > 1) ? (AM_LAYERS - 1) : 0) * (PE_COUNT * 4)
@@ -102,6 +107,7 @@ module sr_accelerator_top #(
     wire idle;
     wire signed [X_WIDTH-1:0] d_in;
     wire [2:0] x_shift;
+    wire lm;
     wire signed [X_WIDTH-1:0] frame_elem;
     wire ctrl_pe_enable, ctrl_load_bias, ctrl_sel_in, ctrl_capture;
     wire ctrl_gate_pair, ctrl_context_we, ctrl_use_ext;
@@ -151,6 +157,7 @@ module sr_accelerator_top #(
         .sel_in(ctrl_sel_in),
         .d_in(d_in),
         .x_shift(x_shift),
+        .lm(lm),
         .weight_addr(ctrl_weight_addr),
         .bias_addr(ctrl_bias_addr),
         .capture_gates(ctrl_capture),
@@ -205,6 +212,8 @@ module sr_accelerator_top #(
         .CONTEXT_DEPTH(CONTEXT_DEPTH),
         .CONTEXT_AW(CONTEXT_AW),
         .N_LSTM_LAYERS(N_LSTM_LAYERS),
+        .AM_GATE_SHIFT(AM_GATE_SHIFT),
+        .LM_GATE_SHIFT(LM_GATE_SHIFT),
         .BIAS_DEPTH(N_LSTM_LAYERS * 2),
         .BIAS_AW(BIAS_AW),
         .NEURON_AW(NEURON_AW)
@@ -216,6 +225,7 @@ module sr_accelerator_top #(
         .sel_in(idle ? 1'b0 : ctrl_sel_in),
         .d_in(d_in),
         .x_shift(x_shift),
+        .lm(lm),
         .weight_addr(weight_addr),
         .weight0_we(weight0_we),
         .weight1_we(weight1_we),
@@ -242,12 +252,15 @@ module sr_accelerator_top #(
         .X_WIDTH(X_WIDTH),
         .W_WIDTH(W_WIDTH),
         .BIAS_WIDTH(BIAS_WIDTH),
-        .SCORE_WIDTH(SCORE_WIDTH)
+        .SCORE_WIDTH(SCORE_WIDTH),
+        .AM_SCORE_SHIFT(AM_SCORE_SHIFT),
+        .LM_SCORE_SHIFT(LM_SCORE_SHIFT)
     ) proj (
         .clk(clk),
         .rst(rst),
         .enable(idle ? 1'b0 : ctrl_out_enable),
         .load_bias(idle ? 1'b0 : ctrl_out_load),
+        .lm(lm),
         .h_element(h_to_proj),
         .weight_addr(out_weight_addr),
         .weight_we(out_weight_we),

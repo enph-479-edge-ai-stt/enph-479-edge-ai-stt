@@ -3,10 +3,13 @@
 // One LSTM layer through the tile, driven the way fsm_controller drives
 // it, for two timesteps. Random weights, biases, inputs and starting
 // context; the x-phase shift is 2 (the AM's) on step 0 and 7 (the CM's)
-// on step 1. Checks:
-//   - every gate pre-activation against a software model: x shifted by
-//     x_shift, and the h_{t-1} phase that reads h from context memory
-//     (sel_in = 1) unshifted
+// on step 1, with lm following it (the AM's gate slice on step 0, the
+// CM's on step 1). Biases are kept within +-2^16 so the AM step's gates
+// land inside the table's range and the CM step's mostly saturate.
+// Checks:
+//   - every gate against a software model: x shifted by x_shift, the
+//     h_{t-1} phase that reads h from context memory (sel_in = 1)
+//     unshifted, then the model's round-and-saturate slice
 //   - c_t and h_t for every neuron against a second lstm_epu fed with the
 //     model's gates (tb_lstm_epu covers the EPU arithmetic itself)
 //   - every context word afterwards: this layer's rewritten, others kept
@@ -28,6 +31,7 @@ module tb_lstm_tile;
     reg pe_enable = 0, load_bias = 0, sel_in = 0;
     reg signed [7:0] d_in = 0;
     reg [2:0] x_shift = 0;
+    reg lm = 0;
     reg [3:0] weight_addr = 0;
     reg weight0_we = 0, weight1_we = 0;
     reg [PE*W_W-1:0] weight0_din = 0, weight1_din = 0;
@@ -42,7 +46,7 @@ module tb_lstm_tile;
     wire signed [15:0] c_t;
     wire signed [7:0] h_t;
     wire [23:0] context_dout;
-    wire signed [15:0] pe_i, pe_f, pe_o, pe_c;
+    wire signed [8:0] pe_i, pe_f, pe_o, pe_c;
 
     // Software copies of every memory.
     reg [PE*W_W-1:0] wm0 [0:WEIGHT_DEPTH-1];
@@ -55,14 +59,14 @@ module tb_lstm_tile;
     reg signed [15:0] xs;
     reg signed [23:0] acc0 [0:PE-1];
     reg signed [23:0] acc1 [0:PE-1];
-    reg signed [15:0] gi [0:PE-1];
-    reg signed [15:0] gf [0:PE-1];
-    reg signed [15:0] go [0:PE-1];
-    reg signed [15:0] gc [0:PE-1];
+    reg signed [8:0] gi [0:PE-1];
+    reg signed [8:0] gf [0:PE-1];
+    reg signed [8:0] go [0:PE-1];
+    reg signed [8:0] gc [0:PE-1];
 
     // Reference EPU, driven from the model.
     reg signed [15:0] r_c = 0;
-    reg signed [63:0] r_gates = 0;
+    reg signed [35:0] r_gates = 0;
     wire signed [15:0] ref_c;
     wire signed [7:0] ref_h;
 
@@ -78,7 +82,7 @@ module tb_lstm_tile;
     ) dut (
         .clk(clk), .rst(rst),
         .pe_enable(pe_enable), .load_bias(load_bias), .sel_in(sel_in), .d_in(d_in),
-        .x_shift(x_shift),
+        .x_shift(x_shift), .lm(lm),
         .weight_addr(weight_addr), .weight0_we(weight0_we), .weight1_we(weight1_we),
         .weight0_din(weight0_din), .weight1_din(weight1_din),
         .bias_addr(bias_addr), .bias_we(bias_we), .bias0_din(bias0_din), .bias1_din(bias1_din),
@@ -98,6 +102,19 @@ module tb_lstm_tile;
     );
 
     always #5 clk = ~clk;
+
+    // A gate as the tile captures it: the accumulator rounded half up at
+    // the model's shift (9 AM, 6 LM) and saturated to 9 bits.
+    function signed [8:0] gate_of;
+        input integer a;
+        input integer lm_job;
+        integer s, r;
+        begin
+            s = lm_job ? 6 : 9;
+            r = (a + (1 << (s - 1))) >>> s;
+            gate_of = (r > 255) ? 255 : ((r < -256) ? -256 : r);
+        end
+    endfunction
 
     task fail;
         input [8*64-1:0] msg;
@@ -127,8 +144,8 @@ module tb_lstm_tile;
 
             for (j = 0; j < 2 * N_LAYERS; j = j + 1) begin
                 for (n = 0; n < PE; n = n + 1) begin
-                    bm0[j][n*B_W +: B_W] = $random(seed);
-                    bm1[j][n*B_W +: B_W] = $random(seed);
+                    bm0[j][n*B_W +: B_W] = $random(seed) % 65536;
+                    bm1[j][n*B_W +: B_W] = $random(seed) % 65536;
                 end
                 @(negedge clk);
                 bias_addr = j;
@@ -175,13 +192,12 @@ module tb_lstm_tile;
                     acc1[n] = acc1[n] + $signed(ctxm[CTX + k][7:0])
                         * $signed(wm1[base + D + k][n*W_W +: W_W]);
                 end
-                // ACC_LSB = 0: the gate is the accumulator's low 16 bits.
                 if (pass == 0) begin
-                    gi[n] = acc0[n][15:0];
-                    gf[n] = acc1[n][15:0];
+                    gi[n] = gate_of(acc0[n], lm);
+                    gf[n] = gate_of(acc1[n], lm);
                 end else begin
-                    go[n] = acc0[n][15:0];
-                    gc[n] = acc1[n][15:0];
+                    go[n] = gate_of(acc0[n], lm);
+                    gc[n] = gate_of(acc1[n], lm);
                 end
             end
         end
@@ -308,6 +324,7 @@ module tb_lstm_tile;
         // Step 1 reads h_{t-1} that step 0 wrote.
         for (t = 0; t < 2; t = t + 1) begin
             x_shift = (t == 0) ? 3'd2 : 3'd7;
+            lm = (t == 1);
             for (k = 0; k < D; k = k + 1)
                 x[k] = $random(seed);
             for (p = 0; p < 2; p = p + 1) begin

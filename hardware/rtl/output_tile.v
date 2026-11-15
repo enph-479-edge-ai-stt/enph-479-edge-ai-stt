@@ -14,8 +14,12 @@
 //  cycle N is valid on cycle N+1. load_bias and enable must not be
 //  high together; load_bias wins inside pe_unit and would skip the MAC.
 //
-//  scores takes accumulator bits [SCORE_LSB +: SCORE_WIDTH]. SCORE_LSB
-//  stays 0 until the fixed-point scale is frozen. No softmax here.
+//  Each score is its accumulator rounded half up at the model's score
+//  shift and saturated to int8 at 2^-2 (+-32). The shift is
+//  proj_frac + 7 - 2 from the manifest, 11 for the AM (2^-13) and 8 for
+//  the CM (2^-10); lm picks it, so it must hold for as long as scores
+//  is read. Formats in shared/specs/weight_image.md ("Activations and
+//  cell"). No softmax here.
 //
 // Parameters:
 //  HIDDEN       - hidden units streamed into the dot product
@@ -32,7 +36,8 @@ module output_tile #(
     parameter BIAS_WIDTH = 24,
     parameter ACC_WIDTH = 24,
     parameter SCORE_WIDTH = 8,
-    parameter SCORE_LSB = 0,
+    parameter AM_SCORE_SHIFT = 11,
+    parameter LM_SCORE_SHIFT = 8,
     parameter WEIGHT_DEPTH = HIDDEN * N_JOBS,
     parameter WEIGHT_AW = $clog2(WEIGHT_DEPTH),
     parameter BIAS_AW = (N_JOBS <= 1) ? 1 : $clog2(N_JOBS)
@@ -41,6 +46,7 @@ module output_tile #(
     input wire rst,
     input wire enable,
     input wire load_bias,
+    input wire lm,
 
     input wire signed [X_WIDTH-1:0] h_element,
 
@@ -89,7 +95,17 @@ module output_tile #(
             assign bias_lane = bias_q[g*BIAS_WIDTH +: BIAS_WIDTH];
             assign bias_ext = bias_lane;
             assign acc[g*ACC_WIDTH +: ACC_WIDTH] = acc_lane;
-            assign scores[g*SCORE_WIDTH +: SCORE_WIDTH] = acc_lane[SCORE_LSB +: SCORE_WIDTH];
+
+            round_sat #(
+                .IN_WIDTH(ACC_WIDTH),
+                .OUT_WIDTH(SCORE_WIDTH),
+                .SHIFT_AM(AM_SCORE_SHIFT),
+                .SHIFT_LM(LM_SCORE_SHIFT)
+            ) score_slice (
+                .lm(lm),
+                .din(acc_lane),
+                .dout(scores[g*SCORE_WIDTH +: SCORE_WIDTH])
+            );
 
             pe_unit #(
                 .X_ELEMENT_WIDTH(X_WIDTH),
