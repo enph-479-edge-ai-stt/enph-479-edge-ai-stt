@@ -9,7 +9,7 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `features.py`: the numpy port of `training/src/training/features/fbank.py`, plus CMVN and the int8 rounding the fabric takes. Real runtime code.
 - `standin.py`: the AM and the CM as float numpy LSTMs holding the 6-bit weights, as `decode.ipynb` runs them in torch. The CM goes behind the search's `CharLM` interface and counts its steps.
 - `export_npz.py`: a checkpoint (`am_6bit.pt`, `cm_6bit.pt`) to the `.npz` the stand-ins load. Runs on a PC with torch, since the board has none.
-- `fabric.py`: the start of the fabric driver. Connects to the FPGA through PYNQ and prints its state without writing anything (no bitstream, no registers), so it runs without sudo: `/usr/local/share/pynq-venv/bin/python3 fabric.py`. On 2026-11-14 it found `EmbeddedDevice 'KV260'` with the FPGA Manager `operating` and no PYNQ overlay loaded.
+- `fabric.py`: the start of the fabric driver. Connects to the FPGA through PYNQ and prints its state without writing anything (no bitstream, no registers), so it runs without sudo: `/usr/local/share/pynq-venv/bin/python3 fabric.py`. Needs the venv's `XILINX_XRT` fix in `runtime/README.md`. On 2026-11-14 it found `EmbeddedDevice 'KV260'` with the FPGA Manager `operating` and no PYNQ overlay loaded.
 - `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON.
 
 ## Setup on the board
