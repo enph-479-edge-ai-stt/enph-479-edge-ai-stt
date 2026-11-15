@@ -62,7 +62,8 @@ The LSTM accelerator, written by hand in RTL and built into a bitstream with Viv
 
 - RTL lives in-repo under `hardware/rtl/`. Hand-written, modelled on the paper's LSTM tile: `pe_unit` (8b x 6b MAC, 24b accumulator), `pe_array`, `pe_buffer` (i/f/o/c gate results), `lstm_epu`, `weight_bram` (packed rows, 6b weights), `sigmoid_lut` / `tanh_lut`, `fsm_controller`, `output_tile`, `sr_accelerator_top`. Several files are still empty stubs. Testbenches in `hardware/testbenches/`.
 - The fabric's arithmetic is the reference. The bitstream must match an integer model of that arithmetic bit-for-bit (gate V3 below). That model is not written yet.
-- Build machine: Vivado on Linux, ~32 GB RAM, 100+ GB disk. Never on Colab, never on the board. Build outputs (`.bit`, `.xsa`, `.jou`, `.log`, `.Xil/`) are gitignored.
+- Build machine: Vivado (Linux or Windows), ~32 GB RAM, 100+ GB disk. Never on Colab, never on the board. Build outputs (`.bit`, `.xsa`, `.jou`, `.log`, `.Xil/`) are gitignored.
+- Build scripts: `hardware/vivado/` (`create_project.tcl` makes the block design, `build_bitstream.tcl` the `.bit` + `.hwh`). The block design is the Zynq PS, an AXI DMA and `sr_accelerator_axi`; steps and board loading in its README.
 - Weight loading: the weights are written in at startup, not baked into the bitstream. They need UltraRAM (the AM alone is 8.7 Mb at 6 bits, more than all the block RAM), and UltraRAM on this chip powers up as zeros with no bitstream init. After `Overlay()`, the ARM streams the weight images in over AXI-DMA. Swapping checkpoints needs no rebuild. The layout the memory and the controller have to follow is `shared/specs/weight_image.md`; the UltraRAM memory and the loader are not written yet.
 
 ### 3. `runtime/` (SoM Linux program)
