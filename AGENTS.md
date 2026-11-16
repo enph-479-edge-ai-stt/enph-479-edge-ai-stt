@@ -68,7 +68,7 @@ The LSTM accelerator, written by hand in RTL and built into a bitstream with Viv
 
 ### 3. `runtime/` (SoM Linux program)
 
-The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Real-time processing is the term 2 target (see Roadmap). The program is not started. `runtime/prototype/` runs the term 1 pipeline on the board's CPU with numpy stand-ins for the fabric, to time the ARM side (results in its README). The decoder it will run (the C++ beam search with the char-LM and the word LM, `shared.decode.beam_cpp`) and the vocab are already written, in `shared/`, and training runs the same code on Colab with the models in torch.
+The live demo on the KV260 ARM cores under Ubuntu + Kria-PYNQ. Real-time processing is the term 2 target (see Roadmap). Written so far: the `stt-runtime` package in `runtime/src/runtime/`, which repacks the weight images into the RTL's four memories (`weights.py`) and streams them in over AXI-DMA (`fabric.py`, board only). `runtime/prototype/` runs the term 1 pipeline on the board's CPU with numpy stand-ins for the fabric, to time the ARM side (results in its README). The decoder it will run (the C++ beam search with the char-LM and the word LM, `shared.decode.beam_cpp`) and the vocab are already written, in `shared/`, and training runs the same code on Colab with the models in torch.
 
 Deliberately absent on the board: PyTorch, any RNN math in software. The ARM only sees feature frames going in and per-frame probability vectors coming out.
 
