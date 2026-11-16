@@ -23,6 +23,10 @@
 //  7 for the LM's one-hot. The tile applies it only while sel_in = 0,
 //  which is layer 0's x-phase.
 //
+//  lm is high from the start of an LM job until the next AM job; the
+//  tiles use it to pick the model's gate and score slices. Clear jobs
+//  leave it as it was, so the last job's scores keep their scale.
+//
 // Jobs:
 //  0 AM          3 layers, 123-d frame, context base 0
 //  1 LM          2 layers, one-hot lm_char, context base from beam_id
@@ -82,6 +86,7 @@ module fsm_controller #(
     output reg sel_in,
     output reg signed [X_WIDTH-1:0] d_in,
     output reg [2:0] x_shift,
+    output wire lm,
     output reg [WEIGHT_AW-1:0] weight_addr,
     output reg [BIAS_AW-1:0] bias_addr,
     output reg capture_gates,
@@ -145,6 +150,7 @@ module fsm_controller #(
     reg signed [X_WIDTH-1:0] d_pipe;
 
     assign state_out = state;
+    assign lm = is_lm;
 
     wire [3:0] n_layers = is_lm ? LM_LAYERS[3:0] : AM_LAYERS[3:0];
     wire [STEP_W-1:0] rows_x = (layer == 0)

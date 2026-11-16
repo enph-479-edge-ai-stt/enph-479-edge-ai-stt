@@ -54,4 +54,4 @@ Row addresses, as the controller reads them:
 
 ## Scores
 
-An AM or LM job sends its 30 int8 scores on `m_axis` once it is done: 8 words, 4 scores per word with symbol 0 in the low byte of the first word, `tlast` on the eighth. Clear jobs send nothing. Start the S2MM transfer before or after the job; the scores wait until they are taken.
+An AM or LM job sends its 30 int8 scores on `m_axis` once it is done: 8 words, 4 scores per word with symbol 0 in the low byte of the first word, `tlast` on the eighth. A score is the logit at 2^-2, saturated (`weight_image.md`, "Activations and cell"), so the logit is the score / 4. Clear jobs send nothing. Start the S2MM transfer before or after the job; the scores wait until they are taken.

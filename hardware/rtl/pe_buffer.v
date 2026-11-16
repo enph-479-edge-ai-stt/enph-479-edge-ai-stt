@@ -7,7 +7,7 @@
 //  pe_in0 and pe_in1 each carry PE_COUNT lanes. capture writes every
 //  lane in one cycle: gate_pair 0 stores them as i and f, gate_pair 1
 //  stores them as o and c. addr then reads one neuron from all four
-//  memories. pe_i, pe_f, pe_o, and pe_c are that 16-bit read. After the
+//  memories. pe_i, pe_f, pe_o, and pe_c are that read. After the
 //  capture the PE array can be reused; the lanes live here.
 //
 // Parameters:
