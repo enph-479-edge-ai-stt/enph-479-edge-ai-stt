@@ -10,7 +10,10 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `standin.py`: the AM and the CM as float numpy LSTMs holding the 6-bit weights, as `decode.ipynb` runs them in torch. The CM goes behind the search's `CharLM` interface and counts its steps.
 - `export_npz.py`: a checkpoint (`am_6bit.pt`, `cm_6bit.pt`) to the `.npz` the stand-ins load. Runs on a PC with torch, since the board has none.
 - `fabric.py`: the start of the fabric driver. Connects to the FPGA through PYNQ and prints its state without writing anything (no bitstream, no registers), so it runs without sudo: `/usr/local/share/pynq-venv/bin/python3 fabric.py`. Needs the venv's `XILINX_XRT` fix in `runtime/README.md`. On 2026-11-14 it found `EmbeddedDevice 'KV260'` with the FPGA Manager `operating` and no PYNQ overlay loaded.
-- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON.
+- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON. `--images DIR` loads the weight images instead, `--fabric` runs them in the fabric's integer arithmetic (`fixed.py`), and `--am-scores` decodes with scores the fabric produced (`fabric_am.py`), checking every frame against the integer model.
+- `fixed.py`: the integer model, the AM and CM as the fabric computes them (formats `fixed.FABRIC`, specified in `shared/specs/weight_image.md`). The bit-exact reference for the board.
+- `predict_one.py`: one utterance through the fabric (`prep` in this venv, `run` with sudo in PYNQ's venv), every AM frame and one CM step compared with the integer model. Its `Accel` class wraps the job registers and DMA.
+- `fabric_am.py`: the AM on the fabric for all 500 utterances (`feats`, then `run` with sudo), saving every frame's int8 scores for `bench.py --am-scores`. On 2026-11-15 at 50 MHz: 500/500 utterances bit-exact against the integer model over 358,563 frames, 20.32% WER with the CM on the ARM.
 
 ## Setup on the board
 
