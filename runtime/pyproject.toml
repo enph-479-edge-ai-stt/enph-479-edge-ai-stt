@@ -1,0 +1,55 @@
+[project]
+name = "stt-runtime"
+version = "0.1.0"
+description = "ENPH 479 STT — the KV260 runtime: weight loading and the fabric driver."
+readme = "README.md"
+# The board's PYNQ venv is Python 3.10. `fabric.py` imports pynq, which only exists there;
+# `weights.py` and the tests run anywhere.
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Kai Asaoka" },
+    { name = "Sudharshan Kannan" },
+    { name = "Andrew Du" },
+    { name = "Anubhav Saini" },
+]
+dependencies = [
+    "numpy>=1.21",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/runtime"]
+
+[tool.ruff]
+# prototype/ is one-off scripts run from their own folder, not part of the package.
+extend-exclude = ["prototype"]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D100", "D101", "D102", "D103", "D104", "D105", "D107"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["runtime"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra"
+pythonpath = ["src"]
