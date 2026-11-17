@@ -2,9 +2,9 @@ name: CI
 
 # Per-project jobs. training/ and shared/ are independent uv projects, so each job
 # runs in its project's directory and only runs when that project (or this file)
-# changes; training depends on shared, so a change to shared runs both. Add a filter
-# and a job per vertical as it grows Python code (runtime/ only has the board
-# prototype's scripts so far, with no tests).
+# changes; training depends on shared, so a change to shared runs both, and the runtime
+# is held to shared's golden cases, so it runs too. hardware/ has no CI (its testbenches
+# run in Vivado's simulator).
 #
 # The workflow itself runs on every PR and the `changes` job decides which
 # vertical jobs run. Don't move the path filter back to `on.paths`: `training` is
@@ -25,6 +25,7 @@ jobs:
     outputs:
       training: ${{ steps.filter.outputs.training }}
       shared: ${{ steps.filter.outputs.shared }}
+      runtime: ${{ steps.filter.outputs.runtime }}
     steps:
       # PRs are diffed through the API; pushes to main are diffed with git, which needs the checkout.
       - uses: actions/checkout@v4
@@ -38,6 +39,10 @@ jobs:
               - "shared/**"
               - ".github/workflows/ci.yml"
             shared:
+              - "shared/**"
+              - ".github/workflows/ci.yml"
+            runtime:
+              - "runtime/**"
               - "shared/**"
               - ".github/workflows/ci.yml"
 
@@ -105,6 +110,33 @@ jobs:
           uv run --frozen --with pybind11 bash cpp/build.sh "$RUNNER_TEMP/kenlm-0.3.0"
         env:
           KENLM_SDIST: https://files.pythonhosted.org/packages/02/6e/f4e159cef39ea4ef2244b4aa32857d447d60a5d0ee269e1b1f8d3723c03e/kenlm-0.3.0.tar.gz
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Pytest
+        run: uv run pytest
+
+  runtime:
+    needs: changes
+    if: needs.changes.outputs.runtime == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: runtime
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "runtime/uv.lock"
+
+      # Python 3.10 (the board's) is pinned by runtime/.python-version. pynq only exists
+      # on the board, so nothing here imports fabric.py.
+      - name: Sync (installs the dev group of ruff and pytest)
+        run: uv sync --frozen
 
       - name: Ruff lint
         run: uv run ruff check .

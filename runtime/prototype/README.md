@@ -6,10 +6,11 @@ FLAC -> features -> CMVN -> int8 -> **AM** -> log-softmax -> beam search with th
 
 The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed apart from the ARM's work. They are a prototype only: the deployed runtime does no RNN math in software.
 
-- `features.py`: the numpy port of `training/src/training/features/fbank.py`, plus CMVN and the int8 rounding the fabric takes. Real runtime code.
+- Features come from the runtime package, `runtime/src/runtime/features.py`.
 - `standin.py`: the AM and the CM as float numpy LSTMs holding the 6-bit weights, as `decode.ipynb` runs them in torch. The CM goes behind the search's `CharLM` interface and counts its steps.
 - `export_npz.py`: a checkpoint (`am_6bit.pt`, `cm_6bit.pt`) to the `.npz` the stand-ins load. Runs on a PC with torch, since the board has none.
 - `fabric.py`: the start of the fabric driver. Connects to the FPGA through PYNQ and prints its state without writing anything (no bitstream, no registers), so it runs without sudo: `/usr/local/share/pynq-venv/bin/python3 fabric.py`. Needs the venv's `XILINX_XRT` fix in `runtime/README.md`. On 2026-11-14 it found `EmbeddedDevice 'KV260'` with the FPGA Manager `operating` and no PYNQ overlay loaded.
+- `show_features_golden.py`: shows the features golden case (`shared/golden/features/`) that `tests/test_features.py` holds `features.py` to. Prints its inputs (the clip, and training's features and int8 frames in `case.npz`), then works through each test on real values: one frame from training and from the numpy port side by side, the largest difference per feature group against the 1e-4 limit, and every int8 value that differs with how close it sat to a rounding tie. Then draws the waveform, training's log-mel features, the int8 frames the fabric gets and |runtime - training| per value. Runs on a PC, from `runtime/` with its venv: `uv run --with matplotlib python prototype/show_features_golden.py [out.png]` (matplotlib only for this run; the figure goes to `prototype/show_features_golden.png`, gitignored, unless given a path).
 - `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON.
 
 ## Setup on the board
@@ -21,7 +22,7 @@ mkdir -p ~/stt-proto/data ~/stt-proto/models && cd ~/stt-proto
 git clone https://github.com/enph-479-edge-ai-stt/enph-479-edge-ai-stt.git repo
 python3 -m venv venv && . venv/bin/activate
 pip install numpy soundfile jiwer pybind11 kenlm==0.3.0   # kenlm builds from source, ~5 min
-pip install -e "repo/shared[wlm]"
+pip install -e "repo/shared[wlm]" -e repo/runtime
 wget https://files.pythonhosted.org/packages/02/6e/f4e159cef39ea4ef2244b4aa32857d447d60a5d0ee269e1b1f8d3723c03e/kenlm-0.3.0.tar.gz
 tar -xzf kenlm-0.3.0.tar.gz && repo/shared/cpp/build.sh kenlm-0.3.0   # the C++ search, ~2 min
 ```

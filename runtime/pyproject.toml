@@ -1,10 +1,10 @@
 [project]
 name = "stt-runtime"
 version = "0.1.0"
-description = "ENPH 479 STT — the KV260 runtime: weight loading and the fabric driver."
+description = "ENPH 479 STT — the KV260 runtime: features, weight loading and the fabric driver."
 readme = "README.md"
 # The board's PYNQ venv is Python 3.10. `fabric.py` imports pynq, which only exists there;
-# `weights.py` and the tests run anywhere.
+# `features.py`, `weights.py` and the tests run anywhere.
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -15,6 +15,8 @@ authors = [
 ]
 dependencies = [
     "numpy>=1.21",
+    # FLAC input (bundled libsndfile).
+    "soundfile>=0.12",
 ]
 
 [dependency-groups]

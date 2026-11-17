@@ -37,6 +37,12 @@ wandb/
 # ... except the decoder golden case's 26-n-gram toy LM
 !/shared/golden/**/*.arpa
 
+# the features golden case's clip
+!/shared/golden/**/*.flac
+
+# the figure runtime/prototype/show_features_golden.py draws
+/runtime/prototype/show_features_golden.png
+
 # --- FPGA build junk ---
 *.bit
 *.xsa
