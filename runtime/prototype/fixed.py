@@ -278,7 +278,7 @@ def main() -> None:
     import jiwer
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+    from runtime.features import Fbank
 
     p = argparse.ArgumentParser()
     p.add_argument("--n", type=int, default=10)

@@ -2,7 +2,7 @@ r"""The AM on the fabric for decode.ipynb's test-clean utterances: int8 scores f
 
 Prototype. Two steps, as ``predict_one.py`` (the fabric needs root and PYNQ's venv):
 
-    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/shared/src
+    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/runtime/src:~/stt-proto/pr/shared/src
     ~/stt-proto/venv/bin/python fabric_am.py feats ~/sr_accel/weights feats.npz --n 500
     sudo env PYTHONPATH=$HOME/sr_accel/runtime_src:$HOME/stt-proto/pr/shared/src \
         /usr/local/share/pynq-venv/bin/python3 fabric_am.py run \
@@ -27,7 +27,7 @@ def feats(images: Path, out: Path, n: int) -> None:
     import fixed
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+    from runtime.features import Fbank
 
     m = fixed.read_ints(images / "am_fabric.mem")["m"]
     fb = Fbank(np.array(m["cmvn_mean"]), np.array(m["cmvn_std"]))

@@ -3,7 +3,7 @@ r"""One utterance through the fabric, checked score for score against the intege
 Prototype. Two steps, because the fabric needs root and PYNQ's venv, and the features and
 the integer model run in the prototype's venv:
 
-    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/shared/src
+    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/runtime/src:~/stt-proto/pr/shared/src
     ~/stt-proto/venv/bin/python predict_one.py prep ~/sr_accel/weights one.npz
     sudo env PYTHONPATH=$HOME/sr_accel/runtime_src:$HOME/stt-proto/pr/shared/src \
         /usr/local/share/pynq-venv/bin/python3 predict_one.py run \
@@ -36,7 +36,7 @@ def prep(images: Path, out: Path) -> None:
     import fixed
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+    from runtime.features import Fbank
 
     am_ints = fixed.read_ints(images / "am_fabric.mem")
     cm_ints = fixed.read_ints(images / "cm_fabric.mem")

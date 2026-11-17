@@ -6,7 +6,7 @@ training scores a sentence. Every step's 30 int8 scores must equal the integer m
 (``fixed.IntCharModel``, formats ``fixed.FABRIC``). Two steps, as ``fabric_am.py`` (the
 fabric needs root and PYNQ's venv):
 
-    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/shared/src
+    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/runtime/src:~/stt-proto/pr/shared/src
     ~/stt-proto/venv/bin/python fabric_cm.py prep ~/sr_accel/weights cm_want.npz --n 500
     sudo env PYTHONPATH=$HOME/sr_accel/runtime_src:$HOME/stt-proto/pr/shared/src \
         /usr/local/share/pynq-venv/bin/python3 fabric_cm.py run \
