@@ -7,6 +7,12 @@ so the error rates are comparable with its run, ``runs/20261102-2019-decode``. T
 stand-ins' time is reported apart from the ARM's: on the board the LSTMs run on the fabric.
 
     python bench.py --n 10
+
+With ``--images DIR`` the models come from the weight images (``am_fabric.mem``,
+``cm_fabric.mem``) instead of the ``.npz`` files, in float, or with ``--fabric`` as the
+fabric's integer arithmetic computes them (``fixed.py``, formats ``fixed.FABRIC``).
+Decode run 4's setup (AM run 3, unpruned trigram):
+``--images DIR --gamma 1.0 --arpa 3-gram.arpa.gz``.
 """
 
 from __future__ import annotations
@@ -18,15 +24,15 @@ import resource
 import time
 from pathlib import Path
 
+import fixed
 import jiwer
 import numpy as np
 import soundfile as sf
-from standin import AcousticModel, CharModel, log_softmax
-
 from runtime.features import Fbank
 from shared import vocab
 from shared.decode import beam_cpp
 from shared.decode.beam import Config
+from standin import AcousticModel, CharModel, log_softmax
 
 # decode.ipynb drew its 100 tuning utterances from dev-clean (2,703 of them) before the
 # 500 test-clean ones, from the same Random(0).
@@ -63,14 +69,39 @@ def main() -> None:
     p.add_argument("--n", type=int, default=10)
     p.add_argument("--beam", type=int, default=128)
     p.add_argument("--root", type=Path, default=Path.home() / "stt-proto")
+    p.add_argument("--gamma", type=float, default=2.0)
+    p.add_argument("--arpa", default="3-gram.pruned.1e-7.arpa.gz", help="in <root>/data")
+    p.add_argument("--images", type=Path, help="folder with am_fabric.* and cm_fabric.*")
+    p.add_argument("--fabric", action="store_true", help="with --images: integer arithmetic")
+    p.add_argument(
+        "--am-scores",
+        type=Path,
+        help="with --fabric: decode with the fabric's AM scores (fabric_am.py) and check "
+        "every frame against the integer model",
+    )
     args = p.parse_args()
-    cfg = Config(beam=args.beam, alpha=0.5, beta=0.5, gamma=2.0)  # decode run's tuned weights
+    fabric_scores = np.load(args.am_scores) if args.am_scores else None
+    cfg = Config(beam=args.beam, alpha=0.5, beta=0.5, gamma=args.gamma)  # decode runs' tuning
 
-    am_npz = dict(np.load(args.root / "models/am.npz"))
-    fb = Fbank(am_npz["cmvn_mean"], am_npz["cmvn_std"])
-    am = AcousticModel(am_npz)
-    cm = CharModel(dict(np.load(args.root / "models/cm.npz")))
-    arpa = args.root / "data/3-gram.pruned.1e-7.arpa.gz"
+    x_scale = 2.0**-5  # the float AM takes the int8 features at their real scale
+    if args.images:
+        am_ints = fixed.read_ints(args.images / "am_fabric.mem")
+        cm_ints = fixed.read_ints(args.images / "cm_fabric.mem")
+        m = am_ints["m"]
+        fb = Fbank(np.array(m["cmvn_mean"]), np.array(m["cmvn_std"]))
+        if args.fabric:
+            am = fixed.IntAcousticModel(am_ints, fixed.fabric_fmt(am_ints))
+            cm = fixed.IntCharModel(cm_ints, fixed.fabric_fmt(cm_ints))
+            x_scale = 1  # the fabric takes the int8 values themselves
+        else:
+            am = AcousticModel(fixed.float_npz(am_ints))
+            cm = CharModel(fixed.float_npz(cm_ints))
+    else:
+        am_npz = dict(np.load(args.root / "models/am.npz"))
+        fb = Fbank(am_npz["cmvn_mean"], am_npz["cmvn_std"])
+        am = AcousticModel(am_npz)
+        cm = CharModel(dict(np.load(args.root / "models/cm.npz")))
+    arpa = args.root / "data" / args.arpa
     t0 = time.perf_counter()
     wlm = beam_cpp.WordLM(str(arpa))
     print(f"KenLM loaded in {time.perf_counter() - t0:.1f} s, peak RSS {rss_mb():.0f} MB")
@@ -87,8 +118,14 @@ def main() -> None:
         t2 = time.perf_counter()
         q = fb.int8(feats)
         t3 = time.perf_counter()
-        logits = am.logits(q * 2.0**-5)
+        logits = am.logits(q * x_scale)
         t4 = time.perf_counter()
+        mismatched = None
+        if fabric_scores is not None:
+            got = fabric_scores[flac.stem].astype(np.int64)
+            want = np.rint(logits * 2 ** fixed.FABRIC["score_frac"]).astype(np.int64)
+            mismatched = int((got != want).any(-1).sum()) if got.shape == want.shape else -1
+            logits = got * 2.0 ** -fixed.FABRIC["score_frac"]
         logp = log_softmax(logits)
         t5 = time.perf_counter()
         cm.standin_s = 0.0
@@ -108,6 +145,7 @@ def main() -> None:
                 "frames": len(q),
                 "cm_steps": cm.steps,
                 "cm_calls": cm.calls,
+                "fabric_mismatched_frames": mismatched,
                 **t,
             }
         )
@@ -123,6 +161,8 @@ def main() -> None:
             flush=True,
         )
         print(f"    ref: {ref}\n    hyp: {hyp}", flush=True)
+        if mismatched:
+            print(f"    FABRIC MISMATCH: {mismatched} of {len(q)} frames", flush=True)
 
     audio = sum(r["audio_s"] for r in rows)
     total = {s: sum(r[s] for r in rows) for s in stages}
@@ -144,13 +184,24 @@ def main() -> None:
     }
     for name, (wer, cer) in errs.items():
         print(f"  {name}: WER {wer:.4f} CER {cer:.4f}")
+    if fabric_scores is not None:
+        bad = [r["utt"] for r in rows if r["fabric_mismatched_frames"]]
+        frames = sum(r["frames"] for r in rows)
+        print(f"  fabric AM vs integer model: {len(rows) - len(bad)}/{len(rows)} utterances "
+              f"exact over {frames} frames; mismatched: {bad[:10]}")
 
     out = args.root / "runs" / time.strftime("%Y%m%d-%H%M%S")
     out.parent.mkdir(exist_ok=True)
     out.with_suffix(".json").write_text(
         json.dumps(
             {
-                "config": vars(cfg),
+                "config": {
+                    **vars(cfg),
+                    "arpa": args.arpa,
+                    "images": str(args.images),
+                    "fabric": args.fabric and fixed.FABRIC,
+                    "am_scores": args.am_scores and str(args.am_scores),
+                },
                 "rows": rows,
                 "total": total,
                 "audio_s": audio,
