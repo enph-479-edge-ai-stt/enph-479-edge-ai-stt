@@ -5,6 +5,8 @@ as the fabric takes it. Matches torchaudio's ``MelSpectrogram`` with the trainin
 constants: ``torch.stft`` centres the 400-sample periodic Hamming window in each 512-sample
 frame (``center=False``), HTK mel scale from 0 Hz to 8 kHz with no filter normalization,
 and ``ComputeDeltas`` (replicate padding, kernel -2..2 / 10).
+
+``tests/test_features.py`` holds it to training's through ``shared/golden/features/``.
 """
 
 from __future__ import annotations

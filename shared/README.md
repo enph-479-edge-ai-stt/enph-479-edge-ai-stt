@@ -15,6 +15,8 @@ Cross-vertical specs, golden vectors, and the code more than one vertical runs.
 
 - `golden/decode/`: the beam search's golden case, which pins its output. See its README.
 
+- `golden/features/`: the features' golden case: one real clip, training's features and int8 frames for it, which the runtime's numpy port is held to. See its README.
+
 Still living in the training code, provisional: the feature spec (`training/src/training/features/fbank.py`).
 
 `uv sync --extra wlm` and `uv run pytest` here, as in `training/`. kenlm builds from source, so not on Windows, where its tests skip. The C++ search's tests (`tests/test_beam_cpp.py`) skip until it is built: `uv run --with pybind11 bash cpp/build.sh <kenlm source dir>`, as CI does.

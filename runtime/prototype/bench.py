@@ -21,9 +21,9 @@ from pathlib import Path
 import jiwer
 import numpy as np
 import soundfile as sf
-from features import Fbank
 from standin import AcousticModel, CharModel, log_softmax
 
+from runtime.features import Fbank
 from shared import vocab
 from shared.decode import beam_cpp
 from shared.decode.beam import Config

@@ -5,7 +5,7 @@ The offline pipeline (Python). Today it trains the acoustic model (AM) and the c
 - `notebooks/am_training.ipynb`: the AM Colab launcher (download, CMVN, train, fine-tune with 6-bit weights, save both models, the logs and the FPGA weight image to Drive).
 - `notebooks/cm_training.ipynb`: the CM Colab launcher (download, sample the LM text, train, fine-tune with 6-bit weights, save both models, the logs and the FPGA weight image to Drive).
 - `src/training/data/librispeech.py`: LibriSpeech audio and LM-text download (wget, md5 check, extract). The archives are kept in a cache folder on Drive, `MyDrive/enph479-stt/data/`, so only the first session downloads from OpenSLR; later ones copy from Drive.
-- `src/training/features/fbank.py`: 123-dim log-mel filterbank features and CMVN (provisional spec).
+- `src/training/features/fbank.py`: 123-dim log-mel filterbank features and CMVN (provisional spec). `features/golden.py` writes their golden case, `shared/golden/features/`, which the runtime's numpy port is held to: rerun it (`python -m training.features.golden`) after changing them.
 - The 30-symbol character vocab (provisional) is `shared/src/shared/vocab.py`, since the runtime's decoder needs it too: `from shared import vocab`. `stt-shared` is a dependency of this project (`../shared`, installed editable by `uv sync` and by the notebooks).
 - `src/training/lstm/`: everything the two models share. Both are a stack of LSTM layers with a linear output layer, so there is one of each of these:
   - `model.py`: the network (`LstmNet`), with the output layer both models end on.
