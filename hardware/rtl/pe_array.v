@@ -13,10 +13,9 @@
 //  parameter PE_ARRAY_SIZE - size of singular PE array
 //  parameter DATA_ELEMENT_WIDTH = 8 - data element width
 //  parameter WEIGHT_INPUT_WIDTH = 6 - weight input width
-//  parameter BIAS_INPUT_WIDTH = 24 - bias input width
 //  parameter OUTPUT_ELEMENT_WIDTH = 24 - accumulator width
-//  Bias lanes are BIAS_INPUT_WIDTH bits and are sign-extended into
-//  the accumulator before load_bias.
+//  Biases are OUTPUT_ELEMENT_WIDTH bits, the accumulator's own width,
+//  so each PE loads its lane as is.
 
 //
 // Ports:
@@ -34,11 +33,9 @@
 //=====================================================================
 
 module pe_array #(
-    
     parameter PE_ARRAY_SIZE = 256,
     parameter DATA_ELEMENT_WIDTH = 8,
     parameter WEIGHT_INPUT_WIDTH = 6,
-    parameter BIAS_INPUT_WIDTH = 24,
     parameter OUTPUT_ELEMENT_WIDTH = 24
 ) (
     
@@ -47,12 +44,11 @@ module pe_array #(
     input wire enable,
     input wire load_bias,
     
-    
     input wire signed [DATA_ELEMENT_WIDTH-1:0] data_input,
     input wire signed [WEIGHT_INPUT_WIDTH * PE_ARRAY_SIZE-1:0] weight_input0,
     input wire signed [WEIGHT_INPUT_WIDTH * PE_ARRAY_SIZE-1:0] weight_input1,
-    input wire signed [BIAS_INPUT_WIDTH * PE_ARRAY_SIZE-1:0] bias_input0,
-    input wire signed [BIAS_INPUT_WIDTH * PE_ARRAY_SIZE-1:0] bias_input1,
+    input wire signed [OUTPUT_ELEMENT_WIDTH * PE_ARRAY_SIZE-1:0] bias_input0,
+    input wire signed [OUTPUT_ELEMENT_WIDTH * PE_ARRAY_SIZE-1:0] bias_input1,
 
     output wire signed [OUTPUT_ELEMENT_WIDTH * PE_ARRAY_SIZE-1:0] pe_out0,
     output wire signed [OUTPUT_ELEMENT_WIDTH * PE_ARRAY_SIZE-1:0] pe_out1
@@ -62,19 +58,8 @@ module pe_array #(
     
     generate
         for (i = 0; i < PE_ARRAY_SIZE; i = i + 1) begin: pe_array_loop
-            wire signed [BIAS_INPUT_WIDTH-1:0] bias0_lane;
-            wire signed [BIAS_INPUT_WIDTH-1:0] bias1_lane;
-            wire signed [OUTPUT_ELEMENT_WIDTH-1:0] bias0_ext;
-            wire signed [OUTPUT_ELEMENT_WIDTH-1:0] bias1_ext;
-
-            assign bias0_lane = bias_input0[i * BIAS_INPUT_WIDTH +: BIAS_INPUT_WIDTH];
-            assign bias1_lane = bias_input1[i * BIAS_INPUT_WIDTH +: BIAS_INPUT_WIDTH];
-            assign bias0_ext = bias0_lane;
-            assign bias1_ext = bias1_lane;
-
             pe_unit #(
                 //Common parameters
-
                 .X_ELEMENT_WIDTH(DATA_ELEMENT_WIDTH),
                 .WEIGHT_ELEMENT_WIDTH(WEIGHT_INPUT_WIDTH),
                 .OUTPUT_ELEMENT_WIDTH(OUTPUT_ELEMENT_WIDTH)
@@ -89,13 +74,12 @@ module pe_array #(
 
                 //Individual inputs
                 .weight(weight_input0[i * WEIGHT_INPUT_WIDTH +: WEIGHT_INPUT_WIDTH]),
-                .bias(bias0_ext),
+                .bias(bias_input0[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH]),
                 .pe_out(pe_out0[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH])            
                 );
             
             pe_unit #(
                 //Common parameters
-
                 .X_ELEMENT_WIDTH(DATA_ELEMENT_WIDTH),
                 .WEIGHT_ELEMENT_WIDTH(WEIGHT_INPUT_WIDTH),
                 .OUTPUT_ELEMENT_WIDTH(OUTPUT_ELEMENT_WIDTH)
@@ -110,13 +94,9 @@ module pe_array #(
 
                 //Individual inputs
                 .weight(weight_input1[i * WEIGHT_INPUT_WIDTH +: WEIGHT_INPUT_WIDTH]),
-                .bias(bias1_ext),
+                .bias(bias_input1[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH]),
                 .pe_out(pe_out1[i * OUTPUT_ELEMENT_WIDTH +: OUTPUT_ELEMENT_WIDTH])            
                 );
-        
-        
         end
     endgenerate
-
-
 endmodule

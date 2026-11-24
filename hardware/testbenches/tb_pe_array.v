@@ -36,7 +36,6 @@ module tb_pe_array;
         .PE_ARRAY_SIZE(N),
         .DATA_ELEMENT_WIDTH(X_W),
         .WEIGHT_INPUT_WIDTH(W_W),
-        .BIAS_INPUT_WIDTH(B_W),
         .OUTPUT_ELEMENT_WIDTH(ACC_W)
     ) dut (
         .clk(clk), .rst(rst), .enable(enable), .load_bias(load_bias),
