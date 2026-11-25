@@ -11,12 +11,16 @@
 //  Weight, bias, context, and projection reads are one cycle late.
 //  pe_enable and the output-tile enable are asserted on the cycle that
 //  data is valid, one step after the address is issued. The EPU is two
-//  cycles per neuron: present the context address, then write
-//  {c_t, h_t} on the next cycle with that same address still held.
+//  cycles per neuron: present the source address, then write {c_t, h_t}
+//  on the next cycle at the destination address. The read data the EPU
+//  uses is the registered output of the source address.
 //
 //  Layer 0 input is the frame (AM) or a one-hot character (LM).
-//  Later layers read the previous layer's h from context. Every layer
-//  then MACs h_{t-1} from that layer's own context.
+//  Later layers read the previous layer's new h from the destination
+//  slot. Every layer then MACs h_{t-1} from the source slot. An LM job
+//  reads the parent from src_beam_id and writes the child to beam_id.
+//  The same number in both is an in-place step. AM jobs ignore both
+//  and use the single acoustic block.
 //
 //  x_shift is the job's layer-0 input shift, 7 - x_frac from the
 //  manifest (shared/specs/weight_image.md): 2 for the AM's features,
@@ -29,9 +33,9 @@
 //
 // Jobs:
 //  0 AM          3 layers, 123-d frame, context base 0
-//  1 LM          2 layers, one-hot lm_char, context base from beam_id
+//  1 LM          2 layers, one-hot lm_char, read src_beam_id, write beam_id
 //  2 CLEAR_AM    zero the acoustic context
-//  3 CLEAR_BEAM  zero one beam's character-LM context
+//  3 CLEAR_BEAM  zero beam_id's character-LM context
 //=====================================================================
 
 module fsm_controller #(
@@ -41,7 +45,7 @@ module fsm_controller #(
     parameter AM_IN = 123,
     parameter LM_IN = 30,
     parameter VOCAB = 30,
-    parameter N_BEAMS = 128,
+    parameter N_BEAMS = 256,
     parameter X_WIDTH = 8,
     parameter SCORE_WIDTH = 8,
     parameter AM_X_SHIFT = 2,
@@ -72,6 +76,7 @@ module fsm_controller #(
 
     input wire start,
     input wire [1:0] job,
+    input wire [BEAM_W-1:0] src_beam_id,
     input wire [BEAM_W-1:0] beam_id,
     input wire [CHAR_W-1:0] lm_char,
     input wire signed [X_WIDTH-1:0] frame_elem,
@@ -136,7 +141,8 @@ module fsm_controller #(
 
     reg [3:0] state;
     reg is_lm;
-    reg [BEAM_W-1:0] beam_q;
+    reg [BEAM_W-1:0] src_q;
+    reg [BEAM_W-1:0] dst_q;
     reg [CHAR_W-1:0] char_q;
     reg [3:0] layer;
     reg pair;
@@ -161,8 +167,12 @@ module fsm_controller #(
     wire [WEIGHT_AW-1:0] h_base = x_base + rows_x;
 
     wire [3:0] global_layer = is_lm ? (AM_LAYERS[3:0] + layer) : layer;
-    wire [CONTEXT_AW-1:0] cur_ctx = is_lm
-        ? (AM_CTX + beam_q * LM_CTX + layer * PE_COUNT)
+    // Parent slot (read) and child slot (write). AM jobs use one block.
+    wire [CONTEXT_AW-1:0] src_ctx = is_lm
+        ? (AM_CTX + src_q * LM_CTX + layer * PE_COUNT)
+        : (layer * PE_COUNT);
+    wire [CONTEXT_AW-1:0] dst_ctx = is_lm
+        ? (AM_CTX + dst_q * LM_CTX + layer * PE_COUNT)
         : (layer * PE_COUNT);
     wire [STEP_W-1:0] issue_off = (mac_step < mac_len_r) ? mac_step : (mac_len_r - 1'b1);
     wire mac_fire = (mac_step != 0) && (mac_step <= mac_len_r);
@@ -203,14 +213,18 @@ module fsm_controller #(
                 pe_enable = mac_fire;
                 sel_in = (state == S_MAC_H) || (layer != 0);
                 weight_addr = mac_base_r + issue_off;
+                // Layer 1+ x-phase reads the h layer 0 just wrote (dst).
+                // h-phase reads this layer's previous h (src).
                 if (sel_in)
-                    context_addr = ((state == S_MAC_X) ? (cur_ctx - PE_COUNT) : cur_ctx) + issue_off;
+                    context_addr = ((state == S_MAC_X) ? (dst_ctx - PE_COUNT) : src_ctx) + issue_off;
             end
             S_CAPTURE: begin
                 capture_gates = 1;
             end
             S_EPU_RD, S_EPU_WR: begin
-                context_addr = cur_ctx + n;
+                // RD presents src; the registered read is what the EPU
+                // sees during WR, which writes dst.
+                context_addr = (state == S_EPU_WR) ? (dst_ctx + n) : (src_ctx + n);
                 neuron_addr = n[NEURON_AW-1:0];
                 context_we = (state == S_EPU_WR);
             end
@@ -220,7 +234,7 @@ module fsm_controller #(
             S_OUT_MAC: begin
                 out_enable = mac_fire;
                 out_weight_addr = mac_base_r + issue_off;
-                context_addr = cur_ctx + issue_off;
+                context_addr = dst_ctx + issue_off;
             end
             S_OUT_EMIT: begin
                 score_valid = 1;
@@ -239,7 +253,8 @@ module fsm_controller #(
         if (rst) begin
             state <= S_IDLE;
             is_lm <= 0;
-            beam_q <= 0;
+            src_q <= 0;
+            dst_q <= 0;
             char_q <= 0;
             layer <= 0;
             pair <= 0;
@@ -257,7 +272,8 @@ module fsm_controller #(
             case (state)
                 S_IDLE: begin
                     if (start) begin
-                        beam_q <= beam_id;
+                        src_q <= src_beam_id;
+                        dst_q <= beam_id;
                         char_q <= lm_char;
                         layer <= 0;
                         pair <= 0;

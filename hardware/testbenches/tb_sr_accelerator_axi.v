@@ -20,7 +20,7 @@ module tb_sr_accelerator_axi;
     localparam AM_IN = 3;
     localparam LM_IN = 5;
     localparam VOCAB = 5;
-    localparam N_BEAMS = 2;
+    localparam N_BEAMS = 3;
     localparam W_W = 6;
     localparam B_W = 24;
     localparam S_W = 8;
@@ -57,6 +57,7 @@ module tb_sr_accelerator_axi;
     localparam A_LOAD_COUNT = 6'h1C;
     localparam A_CTX_ADDR = 6'h20;
     localparam A_CTX_DATA = 6'h24;
+    localparam A_SRC = 6'h28;
 
     localparam JOB_AM = 2'd0;
     localparam JOB_LM = 2'd1;
@@ -93,6 +94,7 @@ module tb_sr_accelerator_axi;
     // Reference accelerator ports.
     reg r_start = 0;
     reg [1:0] r_job = 0;
+    reg [BEAM_W-1:0] r_src_beam = 0;
     reg [BEAM_W-1:0] r_beam_id = 0;
     reg [CHAR_W-1:0] r_lm_char = 0;
     reg r_frame_we = 0;
@@ -159,7 +161,7 @@ module tb_sr_accelerator_axi;
         .WEIGHT_DEPTH(WEIGHT_DEPTH), .CONTEXT_DEPTH(CONTEXT_DEPTH)
     ) ref_accel (
         .clk(clk), .rst(!rst_n), .start(r_start), .job(r_job),
-        .beam_id(r_beam_id), .lm_char(r_lm_char),
+        .src_beam_id(r_src_beam), .beam_id(r_beam_id), .lm_char(r_lm_char),
         .frame_we(r_frame_we), .frame_addr(r_frame_addr), .frame_data(r_frame_data),
         .host_context_addr(r_context_addr),
         .host_weight0_we(r_weight_we), .host_weight1_we(r_weight_we),
@@ -434,12 +436,14 @@ module tb_sr_accelerator_axi;
     // ---------------- jobs ----------------
     task ref_job;
         input [1:0] which;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
         begin
             @(negedge clk);
             r_job = which;
-            r_beam_id = beam;
+            r_src_beam = src;
+            r_beam_id = dst;
             r_lm_char = ch;
             r_start = 1;
             @(negedge clk);
@@ -455,11 +459,13 @@ module tb_sr_accelerator_axi;
 
     task dut_setup;
         input [1:0] which;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
         begin
             axil_write(A_JOB, which);
-            axil_write(A_BEAM, beam);
+            axil_write(A_SRC, src);
+            axil_write(A_BEAM, dst);
             axil_write(A_CHAR, ch);
         end
     endtask
@@ -504,11 +510,12 @@ module tb_sr_accelerator_axi;
 
     task dut_job;
         input [1:0] which;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
         input [8*48-1:0] name;
         begin
-            dut_setup(which, beam, ch);
+            dut_setup(which, src, dst, ch);
             axil_write(A_CTRL, 1);
             dut_finish(which, name);
         end
@@ -535,12 +542,13 @@ module tb_sr_accelerator_axi;
 
     task both;
         input [1:0] which;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
         input [8*48-1:0] name;
         begin
-            ref_job(which, beam, ch);
-            dut_job(which, beam, ch, name);
+            ref_job(which, src, dst, ch);
+            dut_job(which, src, dst, ch, name);
         end
     endtask
 
@@ -553,26 +561,30 @@ module tb_sr_accelerator_axi;
         axil_write(A_BEAM, 1);
         axil_read(A_BEAM, rd);
         check(rd == 1, "BEAM reads back");
+        axil_write(A_SRC, 2);
+        axil_read(A_SRC, rd);
+        check(rd == 2, "SRC_BEAM reads back");
 
         make_memories;
         ref_load;
         dut_load;
 
-        both(JOB_CLEAR_AM, 0, 0, "clear AM");
-        both(JOB_CLEAR_BEAM, 0, 0, "clear beam 0");
-        both(JOB_CLEAR_BEAM, 1, 0, "clear beam 1");
+        both(JOB_CLEAR_AM, 0, 0, 0, "clear AM");
+        both(JOB_CLEAR_BEAM, 0, 0, 0, "clear beam 0");
+        both(JOB_CLEAR_BEAM, 1, 1, 0, "clear beam 1");
+        both(JOB_CLEAR_BEAM, 2, 2, 0, "clear beam 2");
         check_context("context matches after the clears");
 
         ref_frame;
         dut_frame;
-        both(JOB_AM, 0, 0, "AM frame 1 scores match");
+        both(JOB_AM, 0, 0, 0, "AM frame 1 scores match");
 
         // Frame 2: CTRL is taken on the same clock as the frame's last word,
         // so the frame's bytes are still to be written; the start must wait
         // for them or the accelerator drops the later ones.
         ref_frame;
-        ref_job(JOB_AM, 0, 0);
-        dut_setup(JOB_AM, 0, 0);
+        ref_job(JOB_AM, 0, 0, 0);
+        dut_setup(JOB_AM, 0, 0, 0);
         axil_write(A_LOAD_TARGET, 0);
         axil_write(A_LOAD_ADDR, 0);
         fork
@@ -599,12 +611,14 @@ module tb_sr_accelerator_axi;
         axil_read(A_STATUS, rd);
         check(rd[0] == 1 || rd[1] == 1, "start during the frame write was taken");
         dut_finish(JOB_AM, "AM frame 2 scores match (start was held)");
-        both(JOB_LM, 0, 3, "LM beam 0, char 3 scores match");
-        both(JOB_LM, 1, 1, "LM beam 1, char 1 scores match");
-        both(JOB_LM, 0, 4, "LM beam 0, char 4 scores match");
+        both(JOB_LM, 0, 0, 3, "LM beam 0, char 3 scores match");
+        both(JOB_LM, 1, 1, 1, "LM beam 1, char 1 scores match");
+        both(JOB_LM, 0, 0, 4, "LM beam 0, char 4 scores match");
+        both(JOB_LM, 0, 2, 2, "LM branch beam 0 -> 2 scores match");
+        both(JOB_LM, 0, 1, 1, "LM branch beam 0 -> 1 scores match");
         check_context("context matches after the AM and LM jobs");
 
-        both(JOB_CLEAR_BEAM, 0, 0, "clear beam 0 again");
+        both(JOB_CLEAR_BEAM, 0, 0, 0, "clear beam 0 again");
         check_context("context matches after clearing beam 0");
 
         if (errors == 0)

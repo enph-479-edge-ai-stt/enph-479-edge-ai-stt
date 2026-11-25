@@ -1,6 +1,6 @@
 `timescale 1ns / 1ps
 
-// Whole accelerator at small sizes (4 PEs, 2-layer AM, 2-layer LM, two
+// Whole accelerator at small sizes (4 PEs, 2-layer AM, 2-layer LM, three
 // beams) with random nonzero weights, biases and frames. A software
 // model follows every job with the controller's memory map: weight rows
 // per layer and pass, bias slots, context bases per layer and beam, the
@@ -15,7 +15,9 @@
 // EPU arithmetic), so this test is about sequencing and addressing.
 //
 // Sequence: clear all, two AM frames (the second reads the first's h),
-// LM steps on beam 0, beam 1, beam 0, clear beam 0, clear the AM.
+// in-place LM steps on beam 0, beam 1, beam 0, then a branch that reads
+// beam 0 into beams 2 and 1 with two different letters (beam 0 stays),
+// clear beam 0, clear the AM.
 
 module tb_sr_accelerator;
     localparam PE = 4;
@@ -24,7 +26,7 @@ module tb_sr_accelerator;
     localparam AM_IN = 3;
     localparam LM_IN = 5;
     localparam VOCAB = 5;
-    localparam N_BEAMS = 2;
+    localparam N_BEAMS = 3;
     localparam W_W = 6;
     localparam B_W = 24;
     localparam AM_X_SHIFT = 2;
@@ -56,6 +58,7 @@ module tb_sr_accelerator;
     reg rst = 1;
     reg start = 0;
     reg [1:0] job = 0;
+    reg [BEAM_W-1:0] src_beam_id = 0;
     reg [BEAM_W-1:0] beam_id = 0;
     reg [CHAR_W-1:0] lm_char = 0;
     reg frame_we = 0;
@@ -130,7 +133,7 @@ module tb_sr_accelerator;
         .CONTEXT_DEPTH(CONTEXT_DEPTH)
     ) dut (
         .clk(clk), .rst(rst), .start(start), .job(job),
-        .beam_id(beam_id), .lm_char(lm_char),
+        .src_beam_id(src_beam_id), .beam_id(beam_id), .lm_char(lm_char),
         .frame_we(frame_we), .frame_addr(frame_addr), .frame_data(frame_data),
         .host_context_addr(host_context_addr),
         .host_weight0_we(host_weight0_we), .host_weight1_we(host_weight1_we),
@@ -271,24 +274,29 @@ module tb_sr_accelerator;
         end
     endtask
 
-    // The model of one AM or LM job, updating ctxm and exp_score.
+    // One AM or LM job. src is the parent slot, dst the child. The same
+    // number is an in-place step. AM jobs ignore both.
     task model_job;
         input is_lm;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
-        integer wbase, rows_x, gl, ctx, base;
+        integer wbase, rows_x, gl, src_base, dst_base, top, base;
         begin
             wbase = is_lm ? AM_WEIGHT_ROWS : 0;
+            top = 0;
             for (l = 0; l < (is_lm ? LM_LAYERS : AM_LAYERS); l = l + 1) begin
                 rows_x = (l == 0) ? (is_lm ? LM_IN : AM_IN) : PE;
                 gl = is_lm ? AM_LAYERS + l : l;
-                ctx = is_lm ? (AM_CTX + beam * LM_CTX + l * PE) : (l * PE);
+                src_base = is_lm ? (AM_CTX + src * LM_CTX + l * PE) : (l * PE);
+                dst_base = is_lm ? (AM_CTX + dst * LM_CTX + l * PE) : (l * PE);
+                top = dst_base;
 
                 // Layer 0: frame or one-hot, shifted to h's scale.
-                // Above: this step's h from below, unshifted.
+                // Above: this step's new h from the layer below (dst).
                 for (k = 0; k < rows_x; k = k + 1) begin
                     if (l != 0)
-                        xin[k] = $signed(ctxm[ctx - PE + k][7:0]);
+                        xin[k] = $signed(ctxm[dst_base - PE + k][7:0]);
                     else if (is_lm)
                         xin[k] = (k == ch) ? (16'sd1 <<< LM_X_SHIFT) : 16'sd0;
                     else
@@ -305,9 +313,9 @@ module tb_sr_accelerator;
                             acc1[n] = acc1[n] + xin[k] * $signed(wm1[base + k][n*W_W +: W_W]);
                         end
                         for (k = 0; k < PE; k = k + 1) begin
-                            acc0[n] = acc0[n] + $signed(ctxm[ctx + k][7:0])
+                            acc0[n] = acc0[n] + $signed(ctxm[src_base + k][7:0])
                                 * $signed(wm0[base + rows_x + k][n*W_W +: W_W]);
-                            acc1[n] = acc1[n] + $signed(ctxm[ctx + k][7:0])
+                            acc1[n] = acc1[n] + $signed(ctxm[src_base + k][7:0])
                                 * $signed(wm1[base + rows_x + k][n*W_W +: W_W]);
                         end
                         if (p == 0) begin
@@ -320,21 +328,21 @@ module tb_sr_accelerator;
                     end
                 end
 
-                // Each neuron reads and rewrites only its own entry.
+                // Old cell from the parent; new {c, h} into the child.
                 for (n = 0; n < PE; n = n + 1) begin
-                    r_c = ctxm[ctx + n][23:8];
+                    r_c = ctxm[src_base + n][23:8];
                     r_gates = {gc[n], go[n], gf[n], gi[n]};
                     #1;
-                    ctxm[ctx + n] = {ref_c, ref_h};
+                    ctxm[dst_base + n] = {ref_c, ref_h};
                 end
                 wbase = wbase + 2 * (rows_x + PE);
             end
 
-            // Projection of the top layer's h; ctx is still the top layer.
+            // Projection of the child's top-layer h.
             for (v = 0; v < VOCAB; v = v + 1) begin
                 oacc = $signed(obm[is_lm][v*B_W +: B_W]);
                 for (k = 0; k < PE; k = k + 1)
-                    oacc = oacc + $signed(ctxm[ctx + k][7:0])
+                    oacc = oacc + $signed(ctxm[top + k][7:0])
                         * $signed(owm[(is_lm ? PE : 0) + k][v*W_W +: W_W]);
                 exp_score[v] = score_of(oacc, is_lm);
             end
@@ -343,13 +351,15 @@ module tb_sr_accelerator;
 
     task run_job;
         input [1:0] which;
-        input integer beam;
+        input integer src;
+        input integer dst;
         input integer ch;
         begin
             score_n = 0;
             @(negedge clk);
             job = which;
-            beam_id = beam;
+            src_beam_id = src;
+            beam_id = dst;
             lm_char = ch;
             start = 1;
             @(negedge clk);
@@ -413,45 +423,58 @@ module tb_sr_accelerator;
         @(negedge clk);
         load_memories;
 
-        run_job(JOB_CLEAR_AM, 0, 0);
+        run_job(JOB_CLEAR_AM, 0, 0, 0);
         clear_model(0, AM_CTX);
-        run_job(JOB_CLEAR_BEAM, 0, 0);
+        run_job(JOB_CLEAR_BEAM, 0, 0, 0);
         clear_model(AM_CTX, LM_CTX);
-        run_job(JOB_CLEAR_BEAM, 1, 0);
+        run_job(JOB_CLEAR_BEAM, 1, 1, 0);
         clear_model(AM_CTX + LM_CTX, LM_CTX);
+        run_job(JOB_CLEAR_BEAM, 2, 2, 0);
+        clear_model(AM_CTX + 2 * LM_CTX, LM_CTX);
         check_context("clear jobs zero all context");
 
         load_frame;
-        model_job(0, 0, 0);
-        run_job(JOB_AM, 0, 0);
+        model_job(0, 0, 0, 0);
+        run_job(JOB_AM, 0, 0, 0);
         check_scores("AM frame 1 scores");
         check_context("AM frame 1 context");
 
         load_frame;
-        model_job(0, 0, 0);
-        run_job(JOB_AM, 0, 0);
+        model_job(0, 0, 0, 0);
+        run_job(JOB_AM, 0, 0, 0);
         check_scores("AM frame 2 scores (uses frame 1's h)");
         check_context("AM frame 2 context");
 
-        model_job(1, 0, 3);
-        run_job(JOB_LM, 0, 3);
+        model_job(1, 0, 0, 3);
+        run_job(JOB_LM, 0, 0, 3);
         check_scores("LM beam 0, char 3 scores");
         check_context("LM beam 0 context, AM and beam 1 kept");
 
-        model_job(1, 1, 1);
-        run_job(JOB_LM, 1, 1);
+        model_job(1, 1, 1, 1);
+        run_job(JOB_LM, 1, 1, 1);
         check_scores("LM beam 1, char 1 scores");
 
-        model_job(1, 0, 4);
-        run_job(JOB_LM, 0, 4);
+        model_job(1, 0, 0, 4);
+        run_job(JOB_LM, 0, 0, 4);
         check_scores("LM beam 0, char 4 scores (uses its own h)");
         check_context("context after three LM steps");
 
-        run_job(JOB_CLEAR_BEAM, 0, 0);
-        clear_model(AM_CTX, LM_CTX);
-        check_context("clear beam 0 leaves beam 1 and the AM");
+        // Parent beam 0 stays. Two children, different letters.
+        model_job(1, 0, 2, 2);
+        run_job(JOB_LM, 0, 2, 2);
+        check_scores("LM branch beam 0 -> 2, char 2 scores");
+        check_context("parent beam 0 kept, child in beam 2");
 
-        run_job(JOB_CLEAR_AM, 0, 0);
+        model_job(1, 0, 1, 1);
+        run_job(JOB_LM, 0, 1, 1);
+        check_scores("LM branch beam 0 -> 1, char 1 scores");
+        check_context("parent beam 0 kept, both children written");
+
+        run_job(JOB_CLEAR_BEAM, 0, 0, 0);
+        clear_model(AM_CTX, LM_CTX);
+        check_context("clear beam 0 leaves the children and the AM");
+
+        run_job(JOB_CLEAR_AM, 0, 0, 0);
         clear_model(0, AM_CTX);
         check_context("clear AM leaves the LM beams");
 

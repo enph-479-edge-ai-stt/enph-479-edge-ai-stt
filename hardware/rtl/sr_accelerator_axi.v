@@ -20,8 +20,9 @@
 //  takes 4 features per word and writes them one byte per cycle;
 //  bytes past AM_IN are dropped.
 //
-//  Running. JOB, BEAM and LM_CHAR describe the job; writing 1 to CTRL
-//  starts it, and they are captured then. A start that arrives while a
+//  Running. JOB, SRC_BEAM, BEAM (the destination slot) and LM_CHAR
+//  describe the job; writing 1 to CTRL starts it, and they are captured
+//  then. SRC_BEAM == BEAM is an in-place step. A start that arrives while a
 //  row is being written waits for the write to finish. STATUS.done
 //  stays set until the next start. An AM or LM job then sends its VOCAB
 //  int8 scores on m_axis, 4 per word with symbol 0 in the low byte of
@@ -36,7 +37,7 @@ module sr_accelerator_axi #(
     parameter AM_IN = 123,
     parameter LM_IN = 30,
     parameter VOCAB = 30,
-    parameter N_BEAMS = 128,
+    parameter N_BEAMS = 256,
     parameter WEIGHT_DEPTH =
         ((AM_IN + PE_COUNT) * 2)
         + ((AM_LAYERS > 1) ? (AM_LAYERS - 1) : 0) * (PE_COUNT * 4)
@@ -101,6 +102,7 @@ module sr_accelerator_axi #(
     localparam R_LOAD_COUNT = 4'd7;
     localparam R_CTX_ADDR = 4'd8;
     localparam R_CTX_DATA = 4'd9;
+    localparam R_SRC_BEAM = 4'd10;
 
     localparam T_FRAME = 3'd0;
     localparam T_WEIGHT = 3'd1;
@@ -128,6 +130,7 @@ module sr_accelerator_axi #(
 
     // Control registers.
     reg [1:0] job_r;
+    reg [BEAM_W-1:0] src_r;
     reg [BEAM_W-1:0] beam_r;
     reg [CHAR_W-1:0] char_r;
     reg [CONTEXT_AW-1:0] ctx_addr_r;
@@ -137,6 +140,7 @@ module sr_accelerator_axi #(
     reg start_req;
     reg start_r;
     reg [1:0] run_job;
+    reg [BEAM_W-1:0] run_src;
     reg [BEAM_W-1:0] run_beam;
     reg [CHAR_W-1:0] run_char;
     reg job_done;
@@ -204,12 +208,14 @@ module sr_accelerator_axi #(
             s_axil_rvalid <= 0;
             s_axil_rdata <= 0;
             job_r <= 0;
+            src_r <= 0;
             beam_r <= 0;
             char_r <= 0;
             ctx_addr_r <= 0;
             start_req <= 0;
             start_r <= 0;
             run_job <= 0;
+            run_src <= 0;
             run_beam <= 0;
             run_char <= 0;
             job_done <= 0;
@@ -234,6 +240,7 @@ module sr_accelerator_axi #(
                         if (s_axil_wdata[0] && can_start) begin
                             start_req <= 1;
                             run_job <= job_r;
+                            run_src <= src_r;
                             run_beam <= beam_r;
                             run_char <= char_r;
                             job_done <= 0;
@@ -241,6 +248,7 @@ module sr_accelerator_axi #(
                         end
                     end
                     R_JOB: job_r <= s_axil_wdata[1:0];
+                    R_SRC_BEAM: src_r <= s_axil_wdata[BEAM_W-1:0];
                     R_BEAM: beam_r <= s_axil_wdata[BEAM_W-1:0];
                     R_CHAR: char_r <= s_axil_wdata[CHAR_W-1:0];
                     R_LOAD_TARGET: target <= s_axil_wdata[2:0];
@@ -259,6 +267,7 @@ module sr_accelerator_axi #(
                 case (rd_reg)
                     R_CTRL: s_axil_rdata <= {31'd0, job_busy};
                     R_JOB: s_axil_rdata <= {30'd0, job_r};
+                    R_SRC_BEAM: s_axil_rdata <= src_r;
                     R_BEAM: s_axil_rdata <= beam_r;
                     R_CHAR: s_axil_rdata <= char_r;
                     R_STATUS: s_axil_rdata <= {28'd0, out_pending, job_error, job_done, job_busy};
@@ -352,6 +361,7 @@ module sr_accelerator_axi #(
         .rst(!rst_n),
         .start(start_r),
         .job(run_job),
+        .src_beam_id(run_src),
         .beam_id(run_beam),
         .lm_char(run_char),
         .frame_we(writing && target == T_FRAME && row_addr < AM_IN),
