@@ -168,7 +168,6 @@ module lstm_tile #(
         .PE_ARRAY_SIZE(PE_COUNT),
         .DATA_ELEMENT_WIDTH(PE_X_WIDTH),
         .WEIGHT_INPUT_WIDTH(W_WIDTH),
-        .BIAS_INPUT_WIDTH(BIAS_WIDTH),
         .OUTPUT_ELEMENT_WIDTH(ACC_WIDTH)
     ) pe_arrays (
         .clk(clk),
