@@ -24,7 +24,7 @@
 
 module context_memory #(
     parameter STATE_WIDTH = 24,
-    parameter DEPTH = 66304,
+    parameter DEPTH = 131840,
     parameter ADDR_WIDTH = $clog2(DEPTH)
 ) (
     input wire clk,

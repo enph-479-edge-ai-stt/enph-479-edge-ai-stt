@@ -20,7 +20,7 @@ How the ARM drives the accelerator: the control registers and the two AXI stream
 |---|---|---|---|
 | 0x00 | CTRL | write | bit 0: 1 starts a job |
 | 0x04 | JOB | read/write | 0 AM, 1 LM, 2 clear AM context, 3 clear one beam's LM context |
-| 0x08 | BEAM | read/write | the LM job's (or beam clear's) beam, 0..127 |
+| 0x08 | BEAM | read/write | destination slot: where an LM job writes, or which slot a clear zeros, 0..255 |
 | 0x0C | LM_CHAR | read/write | the LM job's input character, a vocab index |
 | 0x10 | STATUS | read | bit 0 busy, bit 1 done, bit 2 error, bit 3 scores waiting on `m_axis` |
 | 0x14 | LOAD_TARGET | read/write | which memory `s_axis` fills (see "Loading") |
@@ -28,8 +28,9 @@ How the ARM drives the accelerator: the control registers and the two AXI stream
 | 0x1C | LOAD_COUNT | read | rows (or frame bytes) written since the last LOAD_TARGET or LOAD_ADDR write |
 | 0x20 | CTX_ADDR | read/write | a context-memory entry to read back |
 | 0x24 | CTX_DATA | read | that entry, `{c[15:0], h[7:0]}` in bits 23:0 |
+| 0x28 | SRC_BEAM | read/write | source slot: the parent an LM job reads, 0..255 |
 
-JOB, BEAM and LM_CHAR are captured when CTRL starts the job, so the next job can be set up while one runs. STATUS.done stays set until the next start.
+JOB, SRC_BEAM, BEAM and LM_CHAR are captured when CTRL starts the job, so the next job can be set up while one runs. An LM step reads its previous `{c, h}` from SRC_BEAM and writes the new state to BEAM. The same number in both is an in-place step. Layer 1 reads the hidden state layer 0 just wrote, which is in BEAM, and its own previous hidden state, which is in SRC_BEAM. A clear uses BEAM only. STATUS.done stays set until the next start.
 
 A start is ignored while the previous job runs (busy) and while its scores still wait on `m_axis`; read STATUS to see whether it took. A start that arrives while the last loaded row is still being written (a few cycles after its last word) waits for the write and then runs.
 
