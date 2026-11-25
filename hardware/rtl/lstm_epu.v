@@ -15,128 +15,96 @@
 //    o = sigmoid(pe_o)
 //    h_t = o * tanh(c_t)
 //
-//  Fixed-point scales are not frozen yet. The slices below match the
-//  previous alignment and will move when shared/specs pins them down.
+//  Fixed point (shared/specs/weight_image.md, "Activations and cell"):
+//    pe_*     9-bit signed at 2^-5 (+-8), already rounded and saturated
+//             from the accumulator by lstm_tile; offset binary indexes
+//             the 512-entry tables
+//    i, f, o  unsigned 8-bit at 2^-8 (sigmoid_lut)
+//    c_tilde  signed 8-bit at 2^-7 (tanh_lut)
+//    c        signed 16-bit at 2^-11 (+-16)
+//    h        signed 8-bit at 2^-7
 //
-//  The LUTs hold zero at index 8 (offset binary), so each signed 4-bit
-//  slice has its top bit flipped before it indexes a table. Sigmoid
-//  outputs are unsigned 0..255 and are zero-extended before multiplying.
+//    c_t = sat16(round(f * c_prev >> 8) + round(i * c_tilde >> 4))
+//    h_t = round(o * tanh(round_sat9(c_t >> 6)) >> 8)
+//
+//  Every round is half up: add half an output step, then shift right
+//  arithmetically. h never needs saturating, |o * tanh| <= 255 * 127
+//  gives |h_t| <= 127.
 //
 //  clk, rst, and enable are unused. The datapath has no registers;
 //  context_memory is what stores c_t and h_t.
 //
 // Ports:
 //  old_hidden_state     - c_{t-1}, 16-bit cell (not h)
-//  pe_input             - {pe_c, pe_o, pe_f, pe_i}, each PE_INPUT_WIDTH
+//  pe_input             - {pe_c, pe_o, pe_f, pe_i}, 9 bits each
 //  hidden_state_output  - c_t
 //  output_state         - h_t
 //=====================================================================
 
-module lstm_epu #(
-    parameter HIDDEN_STATE_WIDTH = 16,
-    parameter PE_INPUT_WIDTH = 16,
-    parameter OUTPUT_ELEMENT_WIDTH = 8
-) (
+module lstm_epu (
     input wire clk,
     input wire rst,
     input wire enable,
 
-    input wire signed [HIDDEN_STATE_WIDTH-1:0] old_hidden_state,
-    input wire signed [PE_INPUT_WIDTH*4-1:0] pe_input,
+    input wire signed [15:0] old_hidden_state,
+    input wire signed [35:0] pe_input,
 
-    output wire signed [HIDDEN_STATE_WIDTH-1:0] hidden_state_output,
-    output wire signed [OUTPUT_ELEMENT_WIDTH-1:0] output_state
+    output wire signed [15:0] hidden_state_output,
+    output wire signed [7:0] output_state
 );
 
-    wire signed [PE_INPUT_WIDTH-1:0] pe_input_i = pe_input[PE_INPUT_WIDTH-1:0];
-    wire signed [PE_INPUT_WIDTH-1:0] pe_input_f = pe_input[2*PE_INPUT_WIDTH-1:PE_INPUT_WIDTH];
-    wire signed [PE_INPUT_WIDTH-1:0] pe_input_o = pe_input[3*PE_INPUT_WIDTH-1:2*PE_INPUT_WIDTH];
-    wire signed [PE_INPUT_WIDTH-1:0] pe_input_c = pe_input[4*PE_INPUT_WIDTH-1:3*PE_INPUT_WIDTH];
+    wire signed [8:0] pe_i = pe_input[8:0];
+    wire signed [8:0] pe_f = pe_input[17:9];
+    wire signed [8:0] pe_o = pe_input[26:18];
+    wire signed [8:0] pe_c = pe_input[35:27];
 
-    // Two's complement slice -> offset-binary LUT index. [7:4] is the
-    // current index.
-    wire [3:0] index_i = {~pe_input_i[7], pe_input_i[6:4]};
-    wire [3:0] index_f = {~pe_input_f[7], pe_input_f[6:4]};
-    wire [3:0] index_o = {~pe_input_o[7], pe_input_o[6:4]};
-    wire [3:0] index_c = {~pe_input_c[7], pe_input_c[6:4]};
+    wire [7:0] sigmoid_i;
+    wire [7:0] sigmoid_f;
+    wire [7:0] sigmoid_o;
+    wire signed [7:0] tanh_c;
 
-    wire [OUTPUT_ELEMENT_WIDTH-1:0] sigmoid_i_out;
-    wire [OUTPUT_ELEMENT_WIDTH-1:0] sigmoid_f_out;
-    wire [OUTPUT_ELEMENT_WIDTH-1:0] sigmoid_o_out;
-    wire [OUTPUT_ELEMENT_WIDTH-1:0] tanh_c_out;
-
-    sigmoid_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .SIGMOID_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) sig_i (
-        .index(index_i),
-        .sigmoid_output(sigmoid_i_out)
-    );
-
-    sigmoid_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .SIGMOID_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) sig_f (
-        .index(index_f),
-        .sigmoid_output(sigmoid_f_out)
-    );
-
-    sigmoid_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .SIGMOID_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) sig_o (
-        .index(index_o),
-        .sigmoid_output(sigmoid_o_out)
-    );
-
-    tanh_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .TANH_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) tanh_c (
-        .index(index_c),
-        .tanh_output(tanh_c_out)
-    );
+    sigmoid_lut sig_i (.index({~pe_i[8], pe_i[7:0]}), .sigmoid_output(sigmoid_i));
+    sigmoid_lut sig_f (.index({~pe_f[8], pe_f[7:0]}), .sigmoid_output(sigmoid_f));
+    sigmoid_lut sig_o (.index({~pe_o[8], pe_o[7:0]}), .sigmoid_output(sigmoid_o));
+    tanh_lut tanh_cand (.index({~pe_c[8], pe_c[7:0]}), .tanh_output(tanh_c));
 
     // 0..255 as a non-negative signed operand.
-    wire signed [OUTPUT_ELEMENT_WIDTH:0] gate_i = {1'b0, sigmoid_i_out};
-    wire signed [OUTPUT_ELEMENT_WIDTH:0] gate_f = {1'b0, sigmoid_f_out};
-    wire signed [OUTPUT_ELEMENT_WIDTH:0] gate_o = {1'b0, sigmoid_o_out};
+    wire signed [8:0] gate_i = {1'b0, sigmoid_i};
+    wire signed [8:0] gate_f = {1'b0, sigmoid_f};
+    wire signed [8:0] gate_o = {1'b0, sigmoid_o};
 
-    // f * c_prev is 24 bits. Drop the low 8 bits to line up with i * c_tilde.
-    wire signed [OUTPUT_ELEMENT_WIDTH+HIDDEN_STATE_WIDTH-1:0] f_times_c_prev;
-    assign f_times_c_prev = gate_f * $signed(old_hidden_state);
+    // f * c_prev is at 2^-19; back to 2^-11. |f * c_prev| < 2^23.
+    wire signed [24:0] f_times_c = gate_f * old_hidden_state;
+    wire signed [16:0] f_term = (f_times_c + 25'sd128) >>> 8;
 
-    wire signed [2*OUTPUT_ELEMENT_WIDTH-1:0] i_times_c_tilde;
-    assign i_times_c_tilde = gate_i * $signed(tanh_c_out);
+    // i * c_tilde is at 2^-15; to 2^-11. |i * c_tilde| <= 32385.
+    wire signed [16:0] i_times_g = gate_i * tanh_c;
+    wire signed [12:0] i_term = (i_times_g + 17'sd8) >>> 4;
 
-    wire signed [HIDDEN_STATE_WIDTH-1:0] f_term =
-        f_times_c_prev[OUTPUT_ELEMENT_WIDTH+HIDDEN_STATE_WIDTH-1:OUTPUT_ELEMENT_WIDTH];
+    wire signed [17:0] c_sum = f_term + i_term;
+    assign hidden_state_output = (c_sum > 18'sd32767) ? 16'sh7fff
+                               : (c_sum < -18'sd32768) ? 16'sh8000
+                               : c_sum[15:0];
 
-    assign hidden_state_output = f_term + i_times_c_tilde;
+    // tanh(c_t): the cell from 2^-11 to the table's 2^-5.
+    wire signed [8:0] c_index;
+    wire signed [7:0] tanh_ct;
 
-    wire [3:0] index_ct = {~hidden_state_output[11], hidden_state_output[10:8]};
-
-    wire signed [OUTPUT_ELEMENT_WIDTH-1:0] tanh_ct_out;
-    tanh_lut #(
-        .LUT_BIT_WIDTH(8),
-        .LUT_PRECISION(16),
-        .INPUT_BIT_WIDTH(4),
-        .TANH_OUTPUT_WIDTH(OUTPUT_ELEMENT_WIDTH)
-    ) tanh_ct_inst (
-        .index(index_ct),
-        .tanh_output(tanh_ct_out)
+    round_sat #(
+        .IN_WIDTH(16),
+        .OUT_WIDTH(9),
+        .SHIFT_AM(6),
+        .SHIFT_LM(6)
+    ) cell_slice (
+        .lm(1'b0),
+        .din(hidden_state_output),
+        .dout(c_index)
     );
 
-    wire signed [2*OUTPUT_ELEMENT_WIDTH-1:0] h_t_full;
-    assign h_t_full = gate_o * tanh_ct_out;
-    assign output_state = h_t_full[OUTPUT_ELEMENT_WIDTH-1:0];
+    tanh_lut tanh_cell (.index({~c_index[8], c_index[7:0]}), .tanh_output(tanh_ct));
+
+    // o * tanh(c_t) is at 2^-15; the high byte, rounded, is h at 2^-7.
+    wire signed [16:0] h_round = gate_o * tanh_ct + 17'sd128;
+    assign output_state = h_round[15:8];
 
 endmodule

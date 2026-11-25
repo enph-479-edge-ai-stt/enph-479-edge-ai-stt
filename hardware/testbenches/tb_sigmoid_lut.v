@@ -1,82 +1,71 @@
 `timescale 1ns / 1ps
- 
+
+// Every entry of the 512-entry table against the formula in sigmoid_lut.v,
+// computed here in real arithmetic: index n is v = (n - 256) / 32 and holds
+// clamp(round(256 / (1 + exp(-v))), 0, 255). Then the shape: monotonic,
+// 128 at index 256, 0 and 255 at the two ends.
+
 module tb_sigmoid_lut;
- 
-    reg  [3:0] index;
+    reg [8:0] index = 0;
     wire [7:0] sigmoid_output;
- 
+
     integer errors = 0;
- 
-    // Expected values, mirrored from the LUT table
-    reg [7:0] expected [0:15];
- 
-    sigmoid_lut dut (
-        .index          (index),
-        .sigmoid_output (sigmoid_output)
-    );
- 
-    // One check: drive an index, wait for combinational settle, compare
-    task check(input [3:0] idx);
-        begin
-            index = idx;
-            #1;
-            if (sigmoid_output !== expected[idx]) begin
-                $display("FAIL: index=%0d  got=%0d  expected=%0d",
-                         idx, sigmoid_output, expected[idx]);
-                errors = errors + 1;
-            end else begin
-                $display("pass: index=%0d  out=%0d", idx, sigmoid_output);
-            end
-        end
-    endtask
- 
-    integer i;
+    integer fails, n, expected, prev;
+
+    sigmoid_lut dut (.index(index), .sigmoid_output(sigmoid_output));
+
     initial begin
-        $dumpfile("tb_sigmoid_lut.vcd");
-        $dumpvars(0, tb_sigmoid_lut);
-
-        expected[0]=0;   expected[1]=0;   expected[2]=1;   expected[3]=2;
-        expected[4]=5;   expected[5]=12;  expected[6]=30;  expected[7]=69;
-        expected[8]=128; expected[9]=186; expected[10]=225; expected[11]=243;
-        expected[12]=250; expected[13]=253; expected[14]=254; expected[15]=255;
- 
-        $display("--- sigmoid_lut: sweep all 16 entries ---");
-        for (i = 0; i < 16; i = i + 1) check(i[3:0]);
- 
-        $display("--- shape checks ---");
-
-        // Sigmoid is monotonic non-decreasing, so each entry must be >= the
-        // one before it. The midpoint (index 8 = 128) is already covered by
-        // the sweep above.
-        begin : mono
-            reg [7:0] prev;
-            integer fails;
-            fails = 0;
-            index = 4'd0; #1;
-            prev = sigmoid_output;
-            for (i = 1; i < 16; i = i + 1) begin
-                index = i[3:0]; #1;
-                if (sigmoid_output < prev) begin
-                    $display("FAIL: not monotonic at index %0d (%0d < %0d)",
-                             i, sigmoid_output, prev);
-                    fails = fails + 1;
-                end
-                prev = sigmoid_output;
+        fails = 0;
+        for (n = 0; n < 512; n = n + 1) begin
+            expected = $rtoi($floor(256.0 / (1.0 + $exp(-(n - 256) / 32.0)) + 0.5));
+            if (expected > 255)
+                expected = 255;
+            index = n;
+            #1;
+            if (sigmoid_output !== expected) begin
+                $display("FAIL: index %0d: got %0d, expected %0d", n, sigmoid_output, expected);
+                fails = fails + 1;
             end
-            errors = errors + fails;
-            if (fails == 0) $display("pass: monotonic non-decreasing");
         end
- 
+        errors = errors + fails;
+        if (fails == 0)
+            $display("pass: all 512 entries match the formula");
+
+        fails = 0;
+        index = 0;
+        #1;
+        prev = sigmoid_output;
+        for (n = 1; n < 512; n = n + 1) begin
+            index = n;
+            #1;
+            if (sigmoid_output < prev) begin
+                $display("FAIL: not monotonic at index %0d", n);
+                fails = fails + 1;
+            end
+            prev = sigmoid_output;
+        end
+        errors = errors + fails;
+        if (fails == 0)
+            $display("pass: monotonic non-decreasing");
+
+        index = 256; #1;
+        if (sigmoid_output !== 8'd128) begin
+            $display("FAIL: sigmoid(0) = %0d, expected 128", sigmoid_output);
+            errors = errors + 1;
+        end
+        index = 0; #1;
+        if (sigmoid_output !== 8'd0) begin
+            $display("FAIL: sigmoid(-8) = %0d, expected 0", sigmoid_output);
+            errors = errors + 1;
+        end
+        index = 511; #1;
+        if (sigmoid_output !== 8'd255) begin
+            $display("FAIL: sigmoid(8 - 1/32) = %0d, expected 255", sigmoid_output);
+            errors = errors + 1;
+        end
+
         if (errors == 0) $display("RESULT: all sigmoid_lut tests passed");
         else             $display("RESULT: %0d failures", errors);
         $finish;
     end
-
-    // Watchdog: fail rather than hang if a wait never returns
-    initial begin
-        #100000;
-        $display("FAIL: timeout, testbench did not finish");
-        $finish;
-    end
- 
 endmodule

@@ -43,6 +43,23 @@ A gate's pre-activation is one accumulator: the bias is preloaded, then one prod
 
 The weight steps are powers of two and the same for a layer's input and hidden weights, so the two phases share one accumulator and the rescale in front of the activation is a bit slice.
 
+## Activations and cell
+
+What the fabric does with an accumulator after the last product. Every "round" below is half up (add half an output step, then shift right arithmetically), and "saturate" clamps to the stated width. These formats were chosen with a numpy model of this arithmetic by greedy CER on 100 test-clean utterances, then checked on all 500 with beam 128 and both LMs: 20.32% WER, against 20.25% for the same 6-bit weights in float.
+
+| Quantity | Format | Real value |
+|---|---|---|
+| Table input (gate pre-activation, and the cell for tanh(c)) | 9-bit signed, saturated | integer x 2^-5 (-8 .. 8 - 2^-5) |
+| Sigmoid output (i, f, o) | 8-bit unsigned, 0..255 | integer x 2^-8 |
+| Tanh output (g, tanh(c)) | 8-bit signed, -127..127 | integer x 2^-7 |
+| Cell state c | 16-bit signed, saturated | integer x 2^-11 (+-16) |
+| Score (output layer) | 8-bit signed, saturated | integer x 2^-2 (+-32) |
+
+- **Gate:** the accumulator rounded at its model's shift, `lstm_frac` + 7 - 5 (9 for the AM, 6 for the CM), then saturated to 9 bits. In offset binary (sign bit flipped) it indexes 512-entry tables: entry n is the value v = (n - 256) / 32, sigmoid entries `clamp(round(256 / (1 + exp(-v))), 0, 255)`, tanh entries `clamp(round(128 * tanh(v)), -127, 127)`. No entry sits on a rounding tie.
+- **Cell:** `c = saturate16(round(f * c_prev >> 8) + round(i * g >> 4))`. `f * c_prev` is at 2^-19 and `i * g` at 2^-15; both come back to 2^-11.
+- **h:** `round(o * tanh(c) >> 8)`, the high byte of a product at 2^-15, which is h at 2^-7. `tanh(c)` indexes the same tanh table with `c` rounded at shift 6 (2^-11 to 2^-5) and saturated to 9 bits. h never saturates: `|o * tanh(c)| <= 255 * 127`.
+- **Score:** the output accumulator rounded at its model's shift, `proj_frac` + 7 - 2 (11 for the AM, 8 for the CM), then saturated to int8. The logit is the score / 4.
+
 ## Rows
 
 One address holds one row for both PE arrays: PE array 0 in the low half, PE array 1 in the high half. For 256 PEs per array a row is 3072 bits, array 0 in bits `[1535:0]` and array 1 in bits `[3071:1536]`.
@@ -110,4 +127,4 @@ Rows go in address order. Each row is 96 words, least significant word first, so
 
 ## Not specified here yet
 
-The cell state's 16-bit format, the activation tables' input range and size, how h is rounded back to 8 bits, the feature and logit streams, the CM's per-hypothesis state, and the control registers.
+The feature stream, the CM's per-hypothesis state, and the control registers.

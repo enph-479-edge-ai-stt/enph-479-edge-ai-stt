@@ -4,7 +4,10 @@
 // HIDDEN-long dot product per job driven with the one-cycle read latency
 // the controller uses, every symbol checked against a software model.
 // Running job 1 after job 0 checks that the bias and weight blocks are
-// selected by address.
+// selected by address. lm follows the job (0 AM, 1 LM), so each score is
+// checked with its model's slice: shift 11 for the AM, 8 for the LM, then
+// saturated to int8. Biases are kept within +-2^15 so the AM's scores
+// stay inside int8 and some of the LM's saturate.
 
 module tb_output_tile;
     localparam HIDDEN = 8;
@@ -20,6 +23,7 @@ module tb_output_tile;
     reg rst = 1;
     reg enable = 0;
     reg load_bias = 0;
+    reg lm = 0;
     reg signed [7:0] h_element = 0;
     reg [3:0] weight_addr = 0;
     reg weight_we = 0;
@@ -37,12 +41,12 @@ module tb_output_tile;
 
     integer errors = 0;
     integer seed = 30;
-    integer j, k, v;
+    integer j, k, v, sc;
 
     output_tile #(
         .HIDDEN(HIDDEN), .VOCAB(VOCAB), .N_JOBS(N_JOBS)
     ) dut (
-        .clk(clk), .rst(rst), .enable(enable), .load_bias(load_bias),
+        .clk(clk), .rst(rst), .enable(enable), .load_bias(load_bias), .lm(lm),
         .h_element(h_element),
         .weight_addr(weight_addr), .weight_we(weight_we), .weight_din(weight_din),
         .bias_addr(bias_addr), .bias_we(bias_we), .bias_din(bias_din),
@@ -55,6 +59,7 @@ module tb_output_tile;
     task run_job;
         input integer job;
         begin
+            lm = job;
             for (k = 0; k < HIDDEN; k = k + 1)
                 h[k] = $random(seed);
             for (v = 0; v < VOCAB; v = v + 1) begin
@@ -91,10 +96,11 @@ module tb_output_tile;
                         job, v, $signed(acc[v*ACC_W +: ACC_W]), model[v]);
                     bad = bad + 1;
                 end
-                // SCORE_LSB = 0: score is the accumulator's low byte (placeholder).
-                if (scores[v*S_W +: S_W] !== model[v][S_W-1:0]) begin
-                    $display("  job %0d symbol %0d: score %h expected %h",
-                        job, v, scores[v*S_W +: S_W], model[v][S_W-1:0]);
+                sc = (model[v] + (job ? 128 : 1024)) >>> (job ? 8 : 11);
+                sc = (sc > 127) ? 127 : ((sc < -128) ? -128 : sc);
+                if ($signed(scores[v*S_W +: S_W]) !== sc) begin
+                    $display("  job %0d symbol %0d: score %0d expected %0d",
+                        job, v, $signed(scores[v*S_W +: S_W]), sc);
                     bad = bad + 1;
                 end
             end
@@ -123,7 +129,7 @@ module tb_output_tile;
         weight_we = 0;
         for (j = 0; j < N_JOBS; j = j + 1) begin
             for (v = 0; v < VOCAB; v = v + 1)
-                biases[j][v*B_W +: B_W] = $random(seed);
+                biases[j][v*B_W +: B_W] = $random(seed) % 32768;
             @(negedge clk);
             bias_addr = j;
             bias_din = biases[j];

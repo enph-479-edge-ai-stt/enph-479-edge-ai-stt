@@ -6,7 +6,10 @@
 // per layer and pass, bias slots, context bases per layer and beam, the
 // projection block per job, and layer 0's x-phase shift (2 for the AM,
 // 7 for the LM). After every job each score and every context word is
-// checked.
+// checked. Gates and scores take the model's slices: gate shift 9 (AM)
+// or 6 (LM) into 9 bits, score shift 11 (AM) or 8 (LM) into int8. Biases
+// are kept within +-2^16 (LSTM) and +-2^15 (output) so not every value
+// saturates.
 //
 // The model's EPU is a second lstm_epu instance (tb_lstm_epu checks the
 // EPU arithmetic), so this test is about sequencing and addressing.
@@ -95,16 +98,16 @@ module tb_sr_accelerator;
     reg signed [15:0] xin [0:MAX_IN-1];
     reg signed [23:0] acc0 [0:PE-1];
     reg signed [23:0] acc1 [0:PE-1];
-    reg signed [15:0] gi [0:PE-1];
-    reg signed [15:0] gf [0:PE-1];
-    reg signed [15:0] go [0:PE-1];
-    reg signed [15:0] gc [0:PE-1];
+    reg signed [8:0] gi [0:PE-1];
+    reg signed [8:0] gf [0:PE-1];
+    reg signed [8:0] go [0:PE-1];
+    reg signed [8:0] gc [0:PE-1];
     reg signed [23:0] oacc;
     reg signed [S_W-1:0] exp_score [0:VOCAB-1];
     reg signed [S_W-1:0] got_score [0:7];
 
     reg signed [15:0] r_c = 0;
-    reg signed [63:0] r_gates = 0;
+    reg signed [35:0] r_gates = 0;
     wire signed [15:0] ref_c;
     wire signed [7:0] ref_h;
 
@@ -155,6 +158,30 @@ module tb_sr_accelerator;
 
     always #5 clk = ~clk;
 
+    // A gate as the tile captures it: the accumulator rounded half up at
+    // the model's shift (9 AM, 6 LM) and saturated to 9 bits.
+    function signed [8:0] gate_of;
+        input integer a;
+        input integer lm_job;
+        integer s, r;
+        begin
+            s = lm_job ? 6 : 9;
+            r = (a + (1 << (s - 1))) >>> s;
+            gate_of = (r > 255) ? 255 : ((r < -256) ? -256 : r);
+        end
+    endfunction
+
+    function signed [7:0] score_of;
+        input integer a;
+        input integer lm_job;
+        integer s, r;
+        begin
+            s = lm_job ? 8 : 11;
+            r = (a + (1 << (s - 1))) >>> s;
+            score_of = (r > 127) ? 127 : ((r < -128) ? -128 : r);
+        end
+    endfunction
+
     always @(posedge clk) begin
         if (score_valid && score_n < 8) begin
             got_score[score_n] = score;
@@ -194,8 +221,8 @@ module tb_sr_accelerator;
 
             for (i = 0; i < 2 * N_LSTM; i = i + 1) begin
                 for (n = 0; n < PE; n = n + 1) begin
-                    bm0[i][n*B_W +: B_W] = $random(seed);
-                    bm1[i][n*B_W +: B_W] = $random(seed);
+                    bm0[i][n*B_W +: B_W] = $random(seed) % 65536;
+                    bm1[i][n*B_W +: B_W] = $random(seed) % 65536;
                 end
                 @(negedge clk);
                 host_bias_addr = i;
@@ -219,7 +246,7 @@ module tb_sr_accelerator;
 
             for (i = 0; i < 2; i = i + 1) begin
                 for (v = 0; v < VOCAB; v = v + 1)
-                    obm[i][v*B_W +: B_W] = $random(seed);
+                    obm[i][v*B_W +: B_W] = $random(seed) % 32768;
                 @(negedge clk);
                 host_out_bias_addr = i;
                 host_out_bias_din = obm[i];
@@ -284,11 +311,11 @@ module tb_sr_accelerator;
                                 * $signed(wm1[base + rows_x + k][n*W_W +: W_W]);
                         end
                         if (p == 0) begin
-                            gi[n] = acc0[n][15:0];
-                            gf[n] = acc1[n][15:0];
+                            gi[n] = gate_of(acc0[n], is_lm);
+                            gf[n] = gate_of(acc1[n], is_lm);
                         end else begin
-                            go[n] = acc0[n][15:0];
-                            gc[n] = acc1[n][15:0];
+                            go[n] = gate_of(acc0[n], is_lm);
+                            gc[n] = gate_of(acc1[n], is_lm);
                         end
                     end
                 end
@@ -309,7 +336,7 @@ module tb_sr_accelerator;
                 for (k = 0; k < PE; k = k + 1)
                     oacc = oacc + $signed(ctxm[ctx + k][7:0])
                         * $signed(owm[(is_lm ? PE : 0) + k][v*W_W +: W_W]);
-                exp_score[v] = oacc[S_W-1:0];
+                exp_score[v] = score_of(oacc, is_lm);
             end
         end
     endtask

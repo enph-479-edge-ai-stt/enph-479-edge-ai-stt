@@ -31,8 +31,12 @@
 //  one per PE; the PEs take PE_X_WIDTH-bit data to hold the result.
 //  h (sel_in = 1) is never shifted.
 //
-//  Accumulator bits [ACC_LSB +: GATE_WIDTH] are what gets captured.
-//  ACC_LSB stays 0 until the fixed-point scale is frozen.
+//  Each accumulator is rescaled to the EPU's table input before it is
+//  captured: rounded half up at the model's gate shift and saturated to
+//  9 bits at 2^-5 (+-8). The shift is lstm_frac + 7 - 5 from the
+//  manifest, 9 for the AM (2^-14) and 6 for the CM (2^-11); lm picks
+//  it and must hold through capture_gates. Formats in
+//  shared/specs/weight_image.md ("Activations and cell").
 //
 //  Context entries are {c_t, h_t}. c_t is the top C_WIDTH bits.
 //=====================================================================
@@ -44,10 +48,10 @@ module lstm_tile #(
     parameter W_WIDTH = 6,
     parameter BIAS_WIDTH = 24,
     parameter ACC_WIDTH = 24,
-    parameter GATE_WIDTH = 16,
     parameter C_WIDTH = 16,
     parameter H_WIDTH = 8,
-    parameter ACC_LSB = 0,
+    parameter AM_GATE_SHIFT = 9,
+    parameter LM_GATE_SHIFT = 6,
     parameter WEIGHT_DEPTH = 4402,
     parameter CONTEXT_DEPTH = 66304,
     parameter N_LSTM_LAYERS = 5,
@@ -65,6 +69,7 @@ module lstm_tile #(
     input wire sel_in,
     input wire signed [X_WIDTH-1:0] d_in,
     input wire [2:0] x_shift,
+    input wire lm,
 
     input wire [WEIGHT_AW-1:0] weight_addr,
     input wire weight0_we,
@@ -89,13 +94,14 @@ module lstm_tile #(
     output wire signed [C_WIDTH-1:0] c_t,
     output wire signed [H_WIDTH-1:0] h_t,
     output wire [C_WIDTH+H_WIDTH-1:0] context_dout,
-    output wire signed [GATE_WIDTH-1:0] pe_i,
-    output wire signed [GATE_WIDTH-1:0] pe_f,
-    output wire signed [GATE_WIDTH-1:0] pe_o,
-    output wire signed [GATE_WIDTH-1:0] pe_c
+    output wire signed [8:0] pe_i,
+    output wire signed [8:0] pe_f,
+    output wire signed [8:0] pe_o,
+    output wire signed [8:0] pe_c
 );
 
     localparam STATE_WIDTH = C_WIDTH + H_WIDTH;
+    localparam GATE_WIDTH = 9;
 
     wire [PE_COUNT*W_WIDTH-1:0] weight0;
     wire [PE_COUNT*W_WIDTH-1:0] weight1;
@@ -184,8 +190,28 @@ module lstm_tile #(
             wire signed [ACC_WIDTH-1:0] acc1;
             assign acc0 = pe_out0[g*ACC_WIDTH +: ACC_WIDTH];
             assign acc1 = pe_out1[g*ACC_WIDTH +: ACC_WIDTH];
-            assign gate_bus0[g*GATE_WIDTH +: GATE_WIDTH] = acc0[ACC_LSB +: GATE_WIDTH];
-            assign gate_bus1[g*GATE_WIDTH +: GATE_WIDTH] = acc1[ACC_LSB +: GATE_WIDTH];
+
+            round_sat #(
+                .IN_WIDTH(ACC_WIDTH),
+                .OUT_WIDTH(GATE_WIDTH),
+                .SHIFT_AM(AM_GATE_SHIFT),
+                .SHIFT_LM(LM_GATE_SHIFT)
+            ) slice0 (
+                .lm(lm),
+                .din(acc0),
+                .dout(gate_bus0[g*GATE_WIDTH +: GATE_WIDTH])
+            );
+
+            round_sat #(
+                .IN_WIDTH(ACC_WIDTH),
+                .OUT_WIDTH(GATE_WIDTH),
+                .SHIFT_AM(AM_GATE_SHIFT),
+                .SHIFT_LM(LM_GATE_SHIFT)
+            ) slice1 (
+                .lm(lm),
+                .din(acc1),
+                .dout(gate_bus1[g*GATE_WIDTH +: GATE_WIDTH])
+            );
         end
     endgenerate
 
@@ -207,11 +233,7 @@ module lstm_tile #(
         .pe_c(pe_c)
     );
 
-    lstm_epu #(
-        .HIDDEN_STATE_WIDTH(C_WIDTH),
-        .PE_INPUT_WIDTH(GATE_WIDTH),
-        .OUTPUT_ELEMENT_WIDTH(H_WIDTH)
-    ) epu (
+    lstm_epu epu (
         .clk(clk),
         .rst(rst),
         .enable(1'b1),
