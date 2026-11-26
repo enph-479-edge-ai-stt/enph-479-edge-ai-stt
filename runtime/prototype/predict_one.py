@@ -81,11 +81,14 @@ class Accel:
         self.frame = allocate(shape=(31,), dtype=np.uint32)  # 124 bytes, 123 used
         self.scores = allocate(shape=(8,), dtype=np.uint32)
 
-    def run(self, job: int, beam: int = 0, char: int = 0, src: int | None = None) -> np.ndarray | None:
+    def run(
+        self, job: int, beam: int = 0, char: int = 0, src: int | None = None
+    ) -> np.ndarray | None:
         """Start ``job`` and wait for it; AM and LM jobs return their 30 int8 scores.
 
         An LM job reads slot ``src`` and writes slot ``beam`` (``src`` defaults to ``beam``,
-        an in-place step)."""
+        an in-place step).
+        """
         scored = job in (JOB_AM, JOB_LM)
         if scored:
             self.dma.recvchannel.transfer(self.scores)

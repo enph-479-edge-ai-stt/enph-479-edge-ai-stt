@@ -87,7 +87,8 @@ def run(bitfile: str, images: Path, npz: Path) -> None:
         print(f"  {name:24s} src {jobs[k][0]:3d} dst {jobs[k][1]:3d}  "
               f"{'exact' if exact[k] else 'MISMATCH'}")
     print(f"random jobs: {exact[hand:].sum()}/{len(jobs) - hand} exact")
-    print(f"all: {exact.sum()}/{len(jobs)} exact, {dt / len(jobs) * 1e3:.3f} ms per job incl. Python")
+    ms = dt / len(jobs) * 1e3
+    print(f"all: {exact.sum()}/{len(jobs)} exact, {ms:.3f} ms per job incl. Python")
     if not exact.all():
         k = int(np.argmin(exact))
         print(f"first mismatch, job {k} {tuple(jobs[k])}:\n"
