@@ -28,11 +28,12 @@ import fixed
 import jiwer
 import numpy as np
 import soundfile as sf
-from features import Fbank
 from shared import vocab
 from shared.decode import beam_cpp
 from shared.decode.beam import Config
 from standin import AcousticModel, CharModel, log_softmax
+
+from runtime.features import Fbank
 
 # decode.ipynb drew its 100 tuning utterances from dev-clean (2,703 of them) before the
 # 500 test-clean ones, from the same Random(0).

@@ -36,7 +36,8 @@ def prep(images: Path, out: Path) -> None:
     import fixed
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+
+    from runtime.features import Fbank
 
     am_ints = fixed.read_ints(images / "am_fabric.mem")
     cm_ints = fixed.read_ints(images / "cm_fabric.mem")

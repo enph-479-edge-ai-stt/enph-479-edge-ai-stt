@@ -27,7 +27,8 @@ def feats(images: Path, out: Path, n: int) -> None:
     import fixed
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+
+    from runtime.features import Fbank
 
     m = fixed.read_ints(images / "am_fabric.mem")["m"]
     fb = Fbank(np.array(m["cmvn_mean"]), np.array(m["cmvn_std"]))

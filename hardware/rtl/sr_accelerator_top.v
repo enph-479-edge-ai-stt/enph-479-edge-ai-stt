@@ -4,7 +4,8 @@
 // Module: sr_accelerator_top.v
 // Description:
 //  One LSTM tile, one output tile, and the controller that switches
-//  them between the acoustic model and the character LM.
+//  them between the acoustic model and the character LM. An LM job
+//  reads the parent slot (src_beam_id) and writes the child (beam_id).
 //
 //  While idle or done, the host writes weights, biases, the
 //  projection, and the next feature frame. context_dout follows
@@ -24,7 +25,7 @@ module sr_accelerator_top #(
     parameter AM_IN = 123,
     parameter LM_IN = 30,
     parameter VOCAB = 30,
-    parameter N_BEAMS = 128,
+    parameter N_BEAMS = 256,
     parameter X_WIDTH = 8,
     parameter W_WIDTH = 6,
     parameter BIAS_WIDTH = 24,
@@ -57,6 +58,7 @@ module sr_accelerator_top #(
 
     input wire start,
     input wire [1:0] job,
+    input wire [BEAM_W-1:0] src_beam_id,
     input wire [BEAM_W-1:0] beam_id,
     input wire [CHAR_W-1:0] lm_char,
 
@@ -145,6 +147,7 @@ module sr_accelerator_top #(
         .rst(rst),
         .start(start),
         .job(job),
+        .src_beam_id(src_beam_id),
         .beam_id(beam_id),
         .lm_char(lm_char),
         .frame_elem(frame_elem),

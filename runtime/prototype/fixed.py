@@ -24,15 +24,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import time
-
 import numpy as np
-from standin import AcousticModel, log_softmax
-
 from shared import vocab
+from standin import AcousticModel, log_softmax
 
 H_FRAC = 7  # h is int8 * 2**-7
 PASSES = ((0, 1), (3, 2))  # per pass: gate on PE array 0, on array 1 (nn.LSTM's i, f, g, o)
@@ -278,7 +276,8 @@ def main() -> None:
     import jiwer
     import soundfile as sf
     from bench import eval_sample, list_utterances
-    from features import Fbank
+
+    from runtime.features import Fbank
 
     p = argparse.ArgumentParser()
     p.add_argument("--n", type=int, default=10)
