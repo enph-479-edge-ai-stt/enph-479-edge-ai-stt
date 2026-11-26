@@ -11,7 +11,11 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `export_npz.py`: a checkpoint (`am_6bit.pt`, `cm_6bit.pt`) to the `.npz` the stand-ins load. Runs on a PC with torch, since the board has none.
 - `fabric.py`: the start of the fabric driver. Connects to the FPGA through PYNQ and prints its state without writing anything (no bitstream, no registers), so it runs without sudo: `/usr/local/share/pynq-venv/bin/python3 fabric.py`. Needs the venv's `XILINX_XRT` fix in `runtime/README.md`. On 2026-11-14 it found `EmbeddedDevice 'KV260'` with the FPGA Manager `operating` and no PYNQ overlay loaded.
 - `show_features_golden.py`: shows the features golden case (`shared/golden/features/`) that `tests/test_features.py` holds `features.py` to. Prints its inputs (the clip, and training's features and int8 frames in `case.npz`), then works through each test on real values: one frame from training and from the numpy port side by side, the largest difference per feature group against the 1e-4 limit, and every int8 value that differs with how close it sat to a rounding tie. Then draws the waveform, training's log-mel features, the int8 frames the fabric gets and |runtime - training| per value. Runs on a PC, from `runtime/` with its venv: `uv run --with matplotlib python prototype/show_features_golden.py [out.png]` (matplotlib only for this run; the figure goes to `prototype/show_features_golden.png`, gitignored, unless given a path).
-- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON.
+- `bench.py`: runs and times every stage on the first `--n` of the 500 test-clean utterances `decode.ipynb` evaluates on (same seed), with its tuned weights, and saves the timings and transcripts as JSON. `--images DIR` loads the weight images instead, `--fabric` runs them in the fabric's integer arithmetic (`fixed.py`), and `--am-scores` decodes with scores the fabric produced (`fabric_am.py`), checking every frame against the integer model.
+- `fixed.py`: the integer model, the AM and CM as the fabric computes them (formats `fixed.FABRIC`, specified in `shared/specs/weight_image.md`). The bit-exact reference for the board.
+- `predict_one.py`: one utterance through the fabric (`prep` in this venv, `run` with sudo in PYNQ's venv), every AM frame and one CM step compared with the integer model. Its `Accel` class wraps the job registers and DMA.
+- `fabric_am.py`: the AM on the fabric for all 500 utterances (`feats`, then `run` with sudo), saving every frame's int8 scores for `bench.py --am-scores`. On 2026-11-15 at 50 MHz: 500/500 utterances bit-exact against the integer model over 358,563 frames, 20.32% WER with the CM on the ARM.
+- `fabric_cm.py`: the CM on the fabric, checked step for step against the integer model, with beam slots interleaved and AM jobs in between (`prep`, then `run` with sudo), and `show` to read its guesses back. On 2026-11-16 at 50 MHz: 52,764/52,764 steps bit-exact. See "The CM on the fabric" below.
 
 ## Setup on the board
 
@@ -68,3 +72,48 @@ Weights `runs/20261020-0142/am_6bit.pt` and `runs/20261102-0334-cm/cm_6bit.pt`; 
 - Over all 500 utterances with the C++ search the ARM side runs at 0.145x real time: 0.140x at the median utterance, 0.194x at the worst (33.9 s long), none over 0.5x. Peak RSS 205 MB.
 - The search was the whole ARM budget in Python. In C++ the ARM side has about 6.8x headroom against real time, on one of the four cores.
 - The CM took 1,134 steps per second of audio over the 500 (1,109 over the 10), in 40 batched calls of about 28. At the RTL's cycle counts (about 2,940 per CM step and 4,670 per AM frame, at an assumed 100 MHz) that is about 38 ms of fabric time per second of audio, before the cost of each call's handshake.
+
+## The CM on the fabric (2026-11-16)
+
+`fabric_cm.py` feeds the transcripts of the same 500 test-clean utterances through the fabric's char-LM a character at a time, each sentence as `EOS` then its characters, the way training scores a sentence, and compares every step's 30 int8 scores with the integer model's (`fixed.IntCharModel`, formats `fixed.FABRIC`). It also checks what the beam search will rely on:
+
+- Each sentence gets its own beam slot (sentence k in slot k mod 128, so every slot is used), and `--group` sentences (8) run at once, interleaved a character at a time. A step that wrote into the wrong slot would show up as a mismatch in another sentence.
+- An AM job runs after every `--am-every` CM steps (4), on a fixed frame, so the switch between the two models' shifts (`lm`) and the AM's context are exercised between CM steps.
+
+Three steps, from `~/stt-proto/<checkout>/runtime/prototype` with `PYTHONPATH` on that checkout's `runtime/src` and `shared/src`:
+
+```bash
+# expected scores from the integer model, in this venv (about 30 s)
+~/stt-proto/venv/bin/python fabric_cm.py prep ~/sr_accel/weights cm_want.npz --n 500
+# the fabric, as root in PYNQ's venv (about 40 s)
+sudo env PYTHONPATH=<checkout>/runtime/src:<checkout>/shared/src \
+    /usr/local/share/pynq-venv/bin/python3 fabric_cm.py run \
+    ~/sr_accel/epu50/sr_accel.bit ~/sr_accel/weights cm_want.npz cm_got.npz
+# its guesses, read back from the saved scores (no root)
+~/stt-proto/venv/bin/python fabric_cm.py show cm_want.npz cm_got.npz --sentences 0 3 --top 3
+```
+
+`run` prints the first mismatch it finds (sentence, slot, step, input character and both score vectors). Mismatches from step 0 point at the arithmetic, ones that only appear once sentences interleave at the slot addressing, and ones right after an AM job at the model switch. `show` prints, for each sentence, the actual text against the CM's top guess at each position (given the true text before it), then a row per step with its `--top` likeliest next characters and their probabilities.
+
+**Results**, with the `epu50` bitstream (50 MHz) and the weight images `fabric_am.py` ran:
+
+- 52,764/52,764 CM steps bit-exact, max |diff| 0, over 500 sentences in 128 slots with 13,191 AM jobs in between. That is gate V3 for the CM, and the AM's (above) with it.
+- 1.6038 bits per character from the fabric's scores, equal to the integer model's. On test-clean transcripts, so not the same number as training's dev-clean bits per character.
+- Top-1 next-character accuracy 64.4%. The CM is weak at the start of a word and near-certain inside one: after "SU" it gives D 28%, C 22%; after "SUD" each of D, E, N, L, Y at 99-100%.
+- 0.46 ms per job including Python (one job, register writes, a wait for done and one score DMA each), against about 59 µs of fabric time per CM step at 50 MHz (about 2,940 cycles).
+
+## Still needed for the CM in the beam search
+
+The check above runs one sentence per slot, which never branches. The beam search does: a prefix is extended by several characters in the same frame ("THE" into "THE " and "THEY"), and each child starts from the parent's state, while the parent may itself stay in the beam. What that needs:
+
+**Hardware** (`hardware/rtl`, with `shared/specs/fabric_interface.md` changing with it):
+
+- **Separate source and destination slots.** A CM job reads `{c, h}` from slot `BEAM` and writes the new state back into the same slot (`fsm_controller.v`), so stepping a parent destroys it for its other children. The host can't copy a slot either: the context memory is readable (`CTX_DATA`) but not writable from the ARM. A job that reads from one slot and writes another (`SRC_BEAM`, `DST_BEAM`) fixes this.
+- **256 CM slots instead of 128.** While a step runs, the old beam's states (the sources, up to 128) and the new ones (the destinations, up to 128) are all live. The context memory goes from about 1.6 Mb to 3.2 Mb.
+- **A batched CM job.** The search needs about 1,100 CM steps per second of audio (1,134 over the 500 utterances, in batches of about 28). At 0.46 ms per job that is about 0.5 s per second of audio before the search's own work, nearly all of it Python and per-job handshakes rather than fabric time. A job that takes a list of `(src, dst, char)` over the DMA, runs them back to back and streams back N x 30 scores makes it one round trip per batch, about 40 per second of audio.
+
+**Runtime:**
+
+- **`FabricCharLM`**, the search's `CharLM` interface on the fabric. A state is a slot object; when the search drops it, a finalizer (`weakref.finalize`) returns the slot to a free list, which works for the C++ search too since it holds states as `py::object`, so the search and its interface don't change. `step` takes a free destination slot per entry and runs one batched job; `start` clears a slot and steps `EOS` into it. Scores come back as int8 at 2^-2, so logits are score / 4, then a log-softmax on the ARM.
+- **One process for the decode.** `fabric_am.py` and `fabric_cm.py` split their work between this venv (`prep`) and PYNQ's (`run`, as root), but the search calls the CM in the middle of decoding, so the decode needs KenLM, the C++ search and soundfile in PYNQ's venv, or the fabric behind a small service the decoder talks to.
+- **The check for it:** a decode with `FabricCharLM` returns exactly what a decode with `fixed.IntCharModel` returns on the ARM, the same N-best and scores, since both are integer arithmetic.
