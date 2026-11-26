@@ -16,7 +16,7 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `predict_one.py`: one utterance through the fabric (`prep` in this venv, `run` with sudo in PYNQ's venv), every AM frame and one CM step compared with the integer model. The fabric side is `runtime.fabric.Fabric`.
 - `fabric_am.py`: the AM on the fabric for all 500 utterances (`feats`, then `run` with sudo), saving every frame's int8 scores for `bench.py --am-scores`. On 2026-11-15 at 50 MHz: 500/500 utterances bit-exact against the integer model over 358,563 frames, 20.32% WER with the CM on the ARM.
 - `fork_test.py`: CM forks on the fabric (needs the SRC_BEAM bitstream, PR #49): a hand-made fork tree plus random jobs over all 256 slots (`prep`, then `run` with sudo), every job's scores compared with the integer model. On 2026-11-25 at 50 MHz: 2,010/2,010 jobs exact.
-- `fabric_decode.py`: the 500-clip check of `runtime.transcribe` (`run` with sudo from the FLACs, then `score` against a `bench.py` run): every transcript must equal the integer run's. On 2026-11-26 at 50 MHz, from saved features with the decode still in this script: 500/500 transcripts equal, 20.32% WER, 0.75x real time with Python driving every job (AM 0.078x, CM 0.52x, search 0.15x), peak 256 slots.
+- `fabric_decode.py`: the 500-clip check of `runtime.transcribe` (`run` with sudo from the FLACs, then `score` against a `bench.py` run): every transcript must equal the integer run's. On 2026-11-26 at 50 MHz, from the FLACs through `Transcriber`: 500/500 transcripts equal, 500/500 utterances' AM scores equal to `fabric_am.py`'s, 20.32% WER, 0.75x real time with Python driving every job (features 0.007x, AM 0.079x, CM 0.52x at 0.481 ms per step, search 0.15x), peak 256 slots.
 
 ## Setup on the board
 
