@@ -126,7 +126,14 @@ class Jobs {
     set(LOAD_ADDR, 0);
     transfer(MM2S, frame_phys_, FRAME_BYTES);
     wait_dma(MM2S);
-    const uint32_t count = reg(LOAD_COUNT);
+    // The DMA goes idle once the frame is in its FIFO, but the accelerator takes a word
+    // per 4 cycles, so the frame is still arriving. Wait for all of it before starting the
+    // AM: a start stops the stream (fabric_interface.md), so the job would see a partial frame.
+    const auto t0 = std::chrono::steady_clock::now();
+    uint32_t count;
+    while ((count = reg(LOAD_COUNT)) < N_IN) {
+      if (std::chrono::steady_clock::now() - t0 > TIMEOUT) break;
+    }
     if (count != N_IN) throw std::runtime_error("frame LOAD_COUNT " + std::to_string(count) + ", expected 123");
   }
 
