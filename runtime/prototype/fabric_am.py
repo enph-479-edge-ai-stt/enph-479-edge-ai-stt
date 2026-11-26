@@ -2,11 +2,9 @@ r"""The AM on the fabric for decode.ipynb's test-clean utterances: int8 scores f
 
 Prototype. Two steps, as ``predict_one.py`` (the fabric needs root and PYNQ's venv):
 
-    # ~/stt-proto/pr/runtime/prototype, PYTHONPATH=~/stt-proto/pr/shared/src
     ~/stt-proto/venv/bin/python fabric_am.py feats ~/sr_accel/weights feats.npz --n 500
-    sudo env PYTHONPATH=$HOME/sr_accel/runtime_src:$HOME/stt-proto/pr/shared/src \
-        /usr/local/share/pynq-venv/bin/python3 fabric_am.py run \
-        ~/sr_accel/epu50/sr_accel.bit ~/sr_accel/weights feats.npz scores.npz
+    sudo /usr/local/share/pynq-venv/bin/python3 fabric_am.py run \
+        ~/sr_accel/srcdst/sr_accel.bit ~/sr_accel/weights feats.npz scores.npz
 
 ``run`` clears the AM context before each utterance. Both files are keyed by utterance id.
 ``bench.py --fabric --am-scores scores.npz`` then decodes with these scores and checks each
@@ -43,21 +41,18 @@ def feats(images: Path, out: Path, n: int) -> None:
 
 def run(bitfile: str, images: Path, feats_npz: Path, out: Path) -> None:
     """One AM job per frame of every utterance; the scores saved to ``out``."""
-    from predict_one import JOB_AM, JOB_CLEAR_AM, Accel
+    from runtime.fabric import STATUS, Fabric
+    from runtime.models import FabricAcousticModel
 
     qs = np.load(feats_npz)
-    accel = Accel(bitfile, images)
+    fabric = Fabric(bitfile)
+    fabric.load_images(images / "am_fabric.mem", images / "cm_fabric.mem")
+    am = FabricAcousticModel(fabric)
     scores, frames = {}, 0
     t = time.perf_counter()
     for k, utt in enumerate(qs.files):
-        q = qs[utt]
-        accel.run(JOB_CLEAR_AM)
-        s = np.empty((len(q), 30), np.int8)
-        for i, frame in enumerate(q):
-            accel.load_frame(frame)
-            s[i] = accel.run(JOB_AM)
-        scores[utt] = s
-        frames += len(q)
+        scores[utt] = am.scores(qs[utt])
+        frames += len(scores[utt])
         if (k + 1) % 50 == 0:
             print(f"[{k + 1}/{len(qs.files)}] {frames} frames, {time.perf_counter() - t:.0f} s",
                   flush=True)
@@ -65,7 +60,7 @@ def run(bitfile: str, images: Path, feats_npz: Path, out: Path) -> None:
     np.savez(out, **scores)
     print(f"{len(scores)} utterances, {frames} frames in {dt:.1f} s "
           f"({dt / frames * 1e3:.2f} ms per frame, {frames / 100 / dt:.1f}x real time) -> {out}")
-    print(f"STATUS 0x{accel.regs.read(0x10):08x}")
+    print(f"STATUS 0x{fabric.regs.read(STATUS):08x}")
 
 
 def main() -> None:

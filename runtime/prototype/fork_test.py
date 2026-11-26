@@ -3,8 +3,7 @@ r"""Char LM forks on the fabric (SRC_BEAM, 256 slots), checked job by job agains
 Prototype, two steps like ``predict_one.py``:
 
     ~/stt-proto/venv/bin/python fork_test.py prep ~/sr_accel/weights forks.npz
-    sudo env PYTHONPATH=$HOME/sr_accel/runtime_src:$HOME/stt-proto/pr/shared/src \
-        /usr/local/share/pynq-venv/bin/python3 fork_test.py run \
+    sudo /usr/local/share/pynq-venv/bin/python3 fork_test.py run \
         ~/sr_accel/srcdst/sr_accel.bit ~/sr_accel/weights forks.npz
 
 ``prep`` makes a list of LM jobs ``(src, dst, char)`` and each job's expected int8 scores:
@@ -68,16 +67,17 @@ def prep(images: Path, out: Path, n_random: int, seed: int) -> None:
 
 def run(bitfile: str, images: Path, npz: Path) -> None:
     """Replay the jobs on the fabric and compare every score vector."""
-    from predict_one import JOB_CLEAR_BEAM, JOB_LM, Accel
+    from runtime.fabric import Fabric
 
     d = np.load(npz)
     jobs, want, hand = d["jobs"], d["scores"], int(d["hand"])
-    accel = Accel(bitfile, images)
-    accel.run(JOB_CLEAR_BEAM, beam=0)
+    fabric = Fabric(bitfile)
+    fabric.load_images(images / "am_fabric.mem", images / "cm_fabric.mem")
+    fabric.clear_slot(0)
     got = np.empty_like(want)
     t = time.perf_counter()
     for k, (src, dst, ch) in enumerate(jobs):
-        got[k] = accel.run(JOB_LM, beam=int(dst), char=int(ch), src=int(src))
+        got[k] = fabric.lm_step(int(src), int(dst), int(ch))
     dt = time.perf_counter() - t
 
     exact = (got == want).all(-1)
