@@ -226,7 +226,7 @@ std::vector<std::pair<std::string, double>> beam_search(
     root->clogp = as_row(s[1]);
   }
   Beam beam;
-  beam.add(root).p_b = 0.0;
+  beam.add(std::move(root)).p_b = 0.0;  // so the root's CM state goes when the beam drops it
 
   size_t n_frames = logp.shape(0), v = logp.shape(1);
   std::vector<int> chars;
