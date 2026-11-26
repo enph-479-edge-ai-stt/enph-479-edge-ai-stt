@@ -16,6 +16,7 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `predict_one.py`: one utterance through the fabric (`prep` in this venv, `run` with sudo in PYNQ's venv), every AM frame and one CM step compared with the integer model. Its `Accel` class wraps the job registers and DMA.
 - `fabric_am.py`: the AM on the fabric for all 500 utterances (`feats`, then `run` with sudo), saving every frame's int8 scores for `bench.py --am-scores`. On 2026-11-15 at 50 MHz: 500/500 utterances bit-exact against the integer model over 358,563 frames, 20.32% WER with the CM on the ARM.
 - `fork_test.py`: CM forks on the fabric (needs the SRC_BEAM bitstream, PR #49): a hand-made fork tree plus random jobs over all 256 slots (`prep`, then `run` with sudo), every job's scores compared with the integer model. On 2026-11-25 at 50 MHz: 2,010/2,010 jobs exact.
+- `fabric_decode.py`: the whole decode with both LSTMs on the fabric (`run` with sudo on `fabric_am.py feats`' features, then `score` against a `bench.py` run). `FabricCharModel` gives the search slot handles that free their slot when the search drops them; at most 256 are live (last beam plus new children), which needs `beam_cpp` to let go of the root prefix. On 2026-11-26 at 50 MHz: 500/500 transcripts equal to the integer run, 20.32% WER, 0.75x real time with Python driving every job (AM 0.078x, CM 0.52x, search 0.15x), peak 256 slots.
 
 ## Setup on the board
 
