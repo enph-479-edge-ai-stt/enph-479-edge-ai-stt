@@ -10,9 +10,12 @@ That loads the bitstream, repacks each image (``weights.py``) and streams its fo
 through the AXI DMA, checking LOAD_COUNT after each. The weight memories can't be read
 back, so a matching LOAD_COUNT is the check that every row went in.
 
-After the weights, ``Fabric`` runs one job at a time: ``am_frame`` streams an int8
-feature frame in and runs the AM on it, ``lm_step`` steps the char LM from one context
-slot into another, and both read the 30 int8 scores back over the DMA.
+After the weights, ``Fabric`` runs jobs in batches through the C++ job loop
+(``runtime._jobs``, built by ``runtime/cpp/build.sh``): ``am`` streams each int8 feature
+frame in and runs the AM on it, ``lm`` steps the char LM from one context slot into
+another for each (src, dst, char), and both read every job's 30 int8 scores back over the
+DMA. Python only hands over the batch, so a job costs its fabric time plus a few register
+writes, not a Python round trip.
 """
 
 from __future__ import annotations
@@ -24,18 +27,13 @@ from pathlib import Path
 import numpy as np
 from pynq import Overlay, allocate
 
+from runtime import _jobs
 from runtime.weights import AM_BASE, Load, cm_base, read_image, repack
 
-CTRL, JOB, BEAM, LM_CHAR, STATUS = 0x00, 0x04, 0x08, 0x0C, 0x10
+STATUS = 0x10
 LOAD_TARGET, LOAD_ADDR, LOAD_COUNT = 0x14, 0x18, 0x1C
-SRC_BEAM = 0x28
-JOB_AM, JOB_LM, JOB_CLEAR_AM, JOB_CLEAR_BEAM = 0, 1, 2, 3
-DONE, ERROR = 0x2, 0x4  # STATUS bits
-T_FRAME = 0  # LOAD_TARGET of the frame memory
+JOB_CLEAR_AM, JOB_CLEAR_BEAM = 2, 3  # the jobs' other registers are in cpp/jobs.cpp
 N_SLOTS = 256  # char-LM context slots (BEAM and SRC_BEAM, 0..255)
-N_IN = 123  # AM input features per frame
-N_SCORES = 30  # one int8 score per vocab symbol
-TIMEOUT_S = 1.0
 
 
 class Fabric:
@@ -46,8 +44,17 @@ class Fabric:
         overlay = Overlay(bitfile)
         self.regs = overlay.accel
         self.dma = overlay.axi_dma_0
-        self._frame = allocate(shape=(31,), dtype=np.uint32)  # 124 bytes, 123 used
-        self._scores = allocate(shape=(8,), dtype=np.uint32)  # 32 bytes, 30 used
+        # Non-cacheable, so the C++ loop needs no cache maintenance around the DMA.
+        self._frame = allocate(shape=(31,), dtype=np.uint32, cacheable=False)  # 123 of 124 B
+        self._scores = allocate(shape=(8,), dtype=np.uint32, cacheable=False)  # 30 of 32 B
+        self._jobs = _jobs.Jobs(
+            self.regs.mmio.array,
+            self.dma.mmio.array,
+            self._frame,
+            self._frame.physical_address,
+            self._scores,
+            self._scores.physical_address,
+        )
 
     def load(self, load: Load) -> None:
         """Stream ``load`` into its memory. Raises if LOAD_COUNT doesn't match."""
@@ -78,57 +85,22 @@ class Fabric:
 
     def clear_am(self) -> None:
         """Zero the AM's context, as at the start of an utterance."""
-        self._run(JOB_CLEAR_AM)
+        self._jobs.clear(JOB_CLEAR_AM)
 
     def clear_slot(self, slot: int) -> None:
         """Zero one char-LM slot's context."""
-        self._run(JOB_CLEAR_BEAM, beam=slot)
+        self._jobs.clear(JOB_CLEAR_BEAM, slot)
 
-    def am_frame(self, q: np.ndarray) -> np.ndarray:
-        """Run the AM on one int8 feature frame ``[N_IN]``; returns its int8 scores."""
-        b = np.zeros(self._frame.nbytes, np.int8)
-        b[:N_IN] = q
-        self._frame[:] = b.view(np.uint32)
-        self._frame.flush()
-        self.regs.write(LOAD_TARGET, T_FRAME)
-        self.regs.write(LOAD_ADDR, 0)
-        self.dma.sendchannel.transfer(self._frame)
-        self.dma.sendchannel.wait()
-        count = self.regs.read(LOAD_COUNT)
-        if count != N_IN:
-            raise RuntimeError(f"frame LOAD_COUNT {count}, expected {N_IN}")
-        return self._run(JOB_AM, scored=True)
+    def am(self, q: np.ndarray) -> np.ndarray:
+        """Run the AM on each int8 feature frame ``[T, 123]`` in turn: int8 scores ``[T, 30]``."""
+        return self._jobs.am(q)
 
-    def lm_step(self, src: int, dst: int, char: int) -> np.ndarray:
-        """Step the char LM from slot ``src`` with ``char`` into slot ``dst``.
+    def lm(self, src, dst, chars) -> np.ndarray:
+        """Step the char LM: slot ``dst[k]`` = step(slot ``src[k]``, ``chars[k]``), in order.
 
-        Returns the int8 scores. ``src == dst`` steps in place.
+        Returns the int8 scores ``[N, 30]``. ``src[k] == dst[k]`` steps in place.
         """
-        return self._run(JOB_LM, beam=dst, char=char, src=src, scored=True)
-
-    def _run(
-        self, job: int, beam: int = 0, char: int = 0, src: int = 0, scored: bool = False
-    ) -> np.ndarray | None:
-        """Start ``job``, wait for it and, for AM and LM jobs, read its scores back."""
-        if scored:
-            self.dma.recvchannel.transfer(self._scores)
-        self.regs.write(JOB, job)
-        self.regs.write(SRC_BEAM, src)
-        self.regs.write(BEAM, beam)
-        self.regs.write(LM_CHAR, char)
-        self.regs.write(CTRL, 1)
-        t = time.perf_counter()
-        while not self.regs.read(STATUS) & DONE:
-            if time.perf_counter() - t > TIMEOUT_S:
-                status = self.regs.read(STATUS)
-                raise RuntimeError(f"job {job} not done after {TIMEOUT_S} s, STATUS 0x{status:x}")
-        if self.regs.read(STATUS) & ERROR:
-            raise RuntimeError(f"job {job}: STATUS error bit set")
-        if not scored:
-            return None
-        self.dma.recvchannel.wait()
-        self._scores.invalidate()
-        return self._scores.view(np.int8)[:N_SCORES].copy()
+        return self._jobs.lm(src, dst, chars)
 
 
 def main() -> None:

@@ -10,8 +10,10 @@ When the search steps the CM, the live states are the last beam's (up to 128) an
 children (up to 128), so 256 slots always suffice. That needs the search to let go of the
 root prefix like any other, which ``shared/cpp/beam_cpp.cpp`` does.
 
-Takes any object with ``Fabric``'s ``clear_am``, ``clear_slot``, ``am_frame`` and
-``lm_step``, so the tests run these on a stand-in without the board.
+Each search step's children go to the fabric as one batch (``Fabric.lm``), and a clip's
+frames as one (``Fabric.am``), so the C++ job loop runs them without Python in between.
+Takes any object with ``Fabric``'s ``clear_am``, ``clear_slot``, ``am`` and ``lm``, so
+the tests run these on a stand-in without the board.
 """
 
 from __future__ import annotations
@@ -89,17 +91,14 @@ class FabricCharModel:
         """Feed EOS from the zero state, as at a sentence boundary in training."""
         slot = self.pool.take()
         self.fabric.clear_slot(slot.n)
-        scores = self.fabric.lm_step(slot.n, slot.n, vocab.EOS_IDX)  # in place
-        return slot, log_softmax(logits(scores))
+        scores = self.fabric.lm([slot.n], [slot.n], [vocab.EOS_IDX])  # in place
+        return slot, log_softmax(logits(scores[0]))
 
     def step(self, states: list[Slot], chars: list[int]) -> tuple[list[Slot], np.ndarray]:
-        """Feed ``chars[n]`` to ``states[n]``, one fabric job each."""
+        """Feed ``chars[n]`` to ``states[n]``: one fabric job each, sent as one batch."""
         t0 = time.perf_counter()
-        new, scores = [], np.empty((len(chars), vocab.VOCAB_SIZE), np.int8)
-        for k, (parent, ch) in enumerate(zip(states, chars, strict=True)):
-            child = self.pool.take()
-            scores[k] = self.fabric.lm_step(parent.n, child.n, ch)
-            new.append(child)
+        new = [self.pool.take() for _ in chars]
+        scores = self.fabric.lm([s.n for s in states], [c.n for c in new], chars)
         self.seconds += time.perf_counter() - t0
         self.steps += len(chars)
         self.calls += 1
@@ -116,7 +115,4 @@ class FabricAcousticModel:
     def scores(self, q: np.ndarray) -> np.ndarray:
         """int8 frames ``[T, N_IN]`` -> int8 scores ``[T, V]``, from a cleared context."""
         self.fabric.clear_am()
-        out = np.empty((len(q), vocab.VOCAB_SIZE), np.int8)
-        for t, frame in enumerate(q):
-            out[t] = self.fabric.am_frame(frame)
-        return out
+        return self.fabric.am(q)

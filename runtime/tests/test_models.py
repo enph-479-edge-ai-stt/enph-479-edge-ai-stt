@@ -31,15 +31,18 @@ class FakeFabric:
     def clear_slot(self, n):
         self.slots[n] = ()
 
-    def lm_step(self, src, dst, char):
-        self.slots[dst] = self.slots[src] + (char,)
-        return fake_scores(self.slots[dst])
+    def lm(self, src, dst, chars):  # in order, so a later job can read an earlier one's slot
+        out = []
+        for s, d, c in zip(src, dst, chars, strict=True):
+            self.slots[d] = self.slots[s] + (c,)
+            out.append(fake_scores(self.slots[d]))
+        return np.stack(out)
 
     def clear_am(self):
         self.am_clears += 1
 
-    def am_frame(self, q):
-        return q[: vocab.VOCAB_SIZE].astype(np.int8)
+    def am(self, q):
+        return q[:, : vocab.VOCAB_SIZE].astype(np.int8)
 
 
 class HistoryCM:
