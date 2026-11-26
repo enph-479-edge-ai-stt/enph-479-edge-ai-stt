@@ -27,6 +27,7 @@ from shared import vocab
 
 CTRL, JOB, BEAM, LM_CHAR, STATUS = 0x00, 0x04, 0x08, 0x0C, 0x10
 LOAD_TARGET, LOAD_ADDR, LOAD_COUNT = 0x14, 0x18, 0x1C
+SRC_BEAM = 0x28
 JOB_AM, JOB_LM, JOB_CLEAR_AM, JOB_CLEAR_BEAM = 0, 1, 2, 3
 N_IN, VOCAB = 123, 30
 
@@ -80,12 +81,16 @@ class Accel:
         self.frame = allocate(shape=(31,), dtype=np.uint32)  # 124 bytes, 123 used
         self.scores = allocate(shape=(8,), dtype=np.uint32)
 
-    def run(self, job: int, beam: int = 0, char: int = 0) -> np.ndarray | None:
-        """Start ``job`` and wait for it; AM and LM jobs return their 30 int8 scores."""
+    def run(self, job: int, beam: int = 0, char: int = 0, src: int | None = None) -> np.ndarray | None:
+        """Start ``job`` and wait for it; AM and LM jobs return their 30 int8 scores.
+
+        An LM job reads slot ``src`` and writes slot ``beam`` (``src`` defaults to ``beam``,
+        an in-place step)."""
         scored = job in (JOB_AM, JOB_LM)
         if scored:
             self.dma.recvchannel.transfer(self.scores)
         self.regs.write(JOB, job)
+        self.regs.write(SRC_BEAM, beam if src is None else src)
         self.regs.write(BEAM, beam)
         self.regs.write(LM_CHAR, char)
         self.regs.write(CTRL, 1)

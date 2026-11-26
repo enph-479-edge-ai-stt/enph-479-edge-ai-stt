@@ -15,6 +15,7 @@ The two LSTMs (bold) belong to the fabric. Here they are numpy stand-ins, timed 
 - `fixed.py`: the integer model, the AM and CM as the fabric computes them (formats `fixed.FABRIC`, specified in `shared/specs/weight_image.md`). The bit-exact reference for the board.
 - `predict_one.py`: one utterance through the fabric (`prep` in this venv, `run` with sudo in PYNQ's venv), every AM frame and one CM step compared with the integer model. Its `Accel` class wraps the job registers and DMA.
 - `fabric_am.py`: the AM on the fabric for all 500 utterances (`feats`, then `run` with sudo), saving every frame's int8 scores for `bench.py --am-scores`. On 2026-11-15 at 50 MHz: 500/500 utterances bit-exact against the integer model over 358,563 frames, 20.32% WER with the CM on the ARM.
+- `fork_test.py`: CM forks on the fabric (needs the SRC_BEAM bitstream, PR #49): a hand-made fork tree plus random jobs over all 256 slots (`prep`, then `run` with sudo), every job's scores compared with the integer model. On 2026-11-25 at 50 MHz: 2,010/2,010 jobs exact.
 
 ## Setup on the board
 
