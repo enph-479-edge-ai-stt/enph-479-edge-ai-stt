@@ -1,10 +1,11 @@
 [project]
 name = "stt-runtime"
 version = "0.1.0"
-description = "ENPH 479 STT — the KV260 runtime: features, weight loading and the fabric driver."
+description = "ENPH 479 STT — the KV260 runtime: features, the fabric driver and the decode."
 readme = "README.md"
-# The board's PYNQ venv is Python 3.10. `fabric.py` imports pynq, which only exists there;
-# `features.py`, `weights.py` and the tests run anywhere.
+# The board's PYNQ venv is Python 3.10. `fabric.py` imports pynq, which only exists there,
+# and `transcribe.py` also needs shared's C++ search built; `features.py`, `weights.py`,
+# `models.py` and the tests run anywhere.
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
@@ -17,6 +18,8 @@ dependencies = [
     "numpy>=1.21",
     # FLAC input (bundled libsndfile).
     "soundfile>=0.12",
+    # The vocab and the decoder (../shared, see [tool.uv.sources]).
+    "stt-shared",
 ]
 
 [dependency-groups]
@@ -24,6 +27,9 @@ dev = [
     "ruff>=0.8.0",
     "pytest>=8.0",
 ]
+
+[tool.uv.sources]
+stt-shared = { path = "../shared", editable = true }
 
 [build-system]
 requires = ["hatchling"]

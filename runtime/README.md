@@ -2,16 +2,36 @@
 
 The live demo program for the KV260's ARM cores (Ubuntu + PYNQ). Real-time processing is the term 2 goal (January to April); in term 1 the board only has to run the RNN on audio files fed in statically.
 
-`prototype/` runs the term 1 pipeline on the board's CPU before the fabric exists, with numpy stand-ins for the two LSTMs, to measure whether the ARM side keeps up. See its README.
+The `stt-runtime` package (`src/runtime/`) does the term 1 job: audio files to text, with both LSTMs on the fabric and everything else on the ARM.
 
-The runtime's first job at startup, after loading the bitstream, is to stream the models' weight images (`am_fabric.mem` and `cm_fabric.mem` from the training runs) into the fabric. That part is written, in `src/runtime/` (the `stt-runtime` package):
+FLAC -> features -> CMVN -> int8 -> **AM on the fabric** -> log-softmax -> beam search on the ARM with the **char LM on the fabric** and the word LM -> text
 
+- `transcribe.py`: board only, as root. `Transcriber` loads the bitstream, both weight images and the word LM once, then decodes clip after clip with per-stage times. From the command line: `sudo /usr/local/share/pynq-venv/bin/python3 -m runtime.transcribe sr_accel.bit weights/ 3-gram.arpa.gz clip.flac [...] [--json out.json]`, where `weights/` holds `am_fabric.*` and `cm_fabric.*`. The search settings default to decode run 4's (`DECODE_RUN_4`: beam 128, alpha 0.5, beta 0.5, gamma 1.0, tuned with the unpruned trigram).
+- `models.py`: the two LSTMs as the decoder sees them. `FabricAcousticModel` runs one AM job per frame. `FabricCharModel` is the search's `CharLM`: a state is a `Slot`, one of the fabric's 256 char-LM context slots, and a step is one LM job that reads the parent's slot and writes a free one. A slot goes back to the `SlotPool` when the search drops the last prefix holding it. When the search steps the char LM, the live states are the last beam's (up to 128) plus the new children (up to 128), so 256 always suffice, which needs `beam_cpp` to free the root prefix like any other (it does). No pynq import, so the tests run it on a stand-in fabric.
+- `fabric.py`: board only. Loads the overlay and the weight images (each of the four loads streamed through the AXI DMA, LOAD_COUNT checked after each since the weight memories can't be read back), then runs jobs: `am_frame` streams an int8 frame in and runs the AM, `lm_step(src, dst, char)` steps the char LM from one slot into another (SRC_BEAM and BEAM, `shared/specs/fabric_interface.md`), and both read the 30 int8 scores back. As a load check, from `runtime/src`: `sudo /usr/local/share/pynq-venv/bin/python3 -m runtime.fabric sr_accel.bit am_fabric.mem [cm_fabric.mem]`. Needs a full-size (`PE_COUNT` 256) bitstream with SRC_BEAM (main since PR #49).
 - `weights.py`: reads a `.mem` image and its `.json` manifest (`shared/specs/weight_image.md`) and repacks it into the four loads the RTL takes (`shared/specs/fabric_interface.md`, "Loading"): LSTM weight rows as they are, each pass's 4 bias rows joined into one row per pass, and the output layer's weights and biases cut down to its 30 PEs. The CM's rows follow the AM's. Pure numpy, runs anywhere.
-- `fabric.py`: board only. Loads the overlay and streams each load through the AXI DMA, checking LOAD_COUNT after each (the weight memories can't be read back). As root, from `runtime/src`: `sudo /usr/local/share/pynq-venv/bin/python3 -m runtime.fabric sr_accel.bit am_fabric.mem [cm_fabric.mem]`. Needs a full-size (`PE_COUNT` 256) bitstream; a smaller test build has narrower rows than the images. First run 2026-11-14, `hardware/vivado/` build at PE_COUNT 256 with AM run `20261103-2314` and CM run `20261102-0334-cm`: all 8 loads' LOAD_COUNTs matched, about 1.7 MB in under 20 ms (the AM's 1.08 MB of LSTM weights in 7 ms).
 - `features.py`: the numpy port of training's feature extraction, plus CMVN and the int8 rounding the fabric takes. Held to training's by `shared/golden/features/` (`tests/test_features.py`): features within 1e-4, int8 frames equal except at rounding ties.
-- `tests/`: the repack against an image built straight from the spec (`uv run pytest` in this folder). It was also checked once against `training/`'s `export.py` at the real AM and CM sizes, with a script kept out of the repo since `runtime/` may not import `training/`.
+- `tests/` (`uv run pytest` in this folder, no board): the repack against an image built straight from the spec, the features against training's golden case, and `models.py` on a stand-in fabric through `shared.decode.beam` (the Python search, same interface as `beam_cpp`): same transcript as the stand-in char LM called directly, and every slot free afterwards.
 
-The decoder it runs on the fabric's output (beam search with the char-LM and the word LM, the C++ build `shared.decode.beam_cpp`) and the vocab are in `shared/` (the `stt-shared` package), not here: training runs the same code on Colab. The runtime will take it as a path dependency on `../shared` when it starts decoding.
+The decoder (beam search with the char LM and the word LM, built in C++ as `shared.decode.beam_cpp`) and the vocab are in `shared/` (the `stt-shared` package), a path dependency on `../shared`: training runs the same code on Colab.
+
+`prototype/` holds the checks that got here: the CPU stand-ins and timing (`bench.py`), the integer model that is the bit-exact reference for the board (`fixed.py`), and the board checks against it (`predict_one.py`, `fabric_am.py`, `fork_test.py`, and `fabric_decode.py`, the 500-clip check of `transcribe.py`). The package does no RNN math in software; `fixed.py` stays out of it. See its README.
+
+## Board setup: installing the runtime into PYNQ's venv
+
+The fabric needs root and PYNQ, so the runtime runs in Kria-PYNQ's venv as root. Point that venv at the two packages' `src/` folders in a checkout of this repo with a `.pth` file, add `soundfile` (FLAC input, which the venv doesn't have), and build the C++ search with the venv's Python (pybind11 is already in it). With the checkout in `~/stt-repo` and the kenlm 0.3.0 source unpacked as in `prototype/README.md`:
+
+```bash
+printf '%s\n' ~/stt-repo/shared/src ~/stt-repo/runtime/src \
+    | sudo tee /usr/local/share/pynq-venv/lib/python3.10/site-packages/stt.pth > /dev/null
+sudo /usr/local/share/pynq-venv/bin/pip install soundfile
+PYTHON=/usr/local/share/pynq-venv/bin/python3 bash ~/stt-repo/shared/cpp/build.sh ~/stt-proto/kenlm-src/kenlm-0.3.0
+sudo /usr/local/share/pynq-venv/bin/python3 -c "import runtime.transcribe; print('ok')"
+```
+
+- **Why not `pip install -e`:** the venv's pip (22.0.2) runs hatchling in an isolated build that still picks up the venv's old `packaging`, and fails with `No module named 'packaging.licenses'` (2026-11-26). Pinning hatchling below 1.27 didn't help, and upgrading `packaging` or pip would change the venv PYNQ itself runs on. The `.pth` file is what an editable install writes anyway, without the build. numpy stays the venv's (1.26.4).
+- The checkout has to have LF line endings: `build.sh` fails with `set: pipefail: invalid option name` if it was copied over from a Windows working tree.
+- An update is a `git pull`, plus a rebuild of `beam_cpp` when `shared/cpp/` changes. **Rerunning Kria-PYNQ's `install.sh` recreates the venv**, which drops `stt.pth` and `soundfile` along with the `.pth` fix below, so redo them.
 
 ## Board setup: the PYNQ venv's environment
 

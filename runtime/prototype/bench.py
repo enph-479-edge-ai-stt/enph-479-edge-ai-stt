@@ -25,7 +25,6 @@ import time
 from pathlib import Path
 
 import fixed
-import jiwer
 import numpy as np
 import soundfile as sf
 from shared import vocab
@@ -66,6 +65,8 @@ def rss_mb() -> float:
 
 def main() -> None:
     """Decode ``--n`` utterances, print per-utterance and total timings, save them as JSON."""
+    import jiwer  # here, so fabric_decode.py can import the utterance list under PYNQ's venv
+
     p = argparse.ArgumentParser()
     p.add_argument("--n", type=int, default=10)
     p.add_argument("--beam", type=int, default=128)
