@@ -1,17 +1,28 @@
 # Create the Vivado project and block design for the KV260: the Zynq PS, an AXI DMA and
 # sr_accelerator_axi (shared/specs/fabric_interface.md), wired as PYNQ expects.
 #
-#   vivado -mode batch -source create_project.tcl -tclargs <build dir> [PE_COUNT]
+#   vivado -mode batch -source create_project.tcl -tclargs <build dir> [PE_COUNT] [design name]
 #
 # The build dir must be outside OneDrive (sync locks Vivado's files mid-run). PE_COUNT
 # defaults to the real 256; a small one (e.g. 16) builds in minutes to test the flow.
-# Then build_bitstream.tcl makes the .bit and .hwh.
+# The design name defaults to sr_accel and is the project, the block design, and the
+# .bit/.hwh base name. Pass a new directory and a new name to keep an older bitstream.
+# Then build_bitstream.tcl makes the .bit and .hwh. An argument that is an integer is
+# PE_COUNT; any other extra argument is the design name, in either order.
 
 if {[llength $argv] < 1} {
-    error "usage: vivado -mode batch -source create_project.tcl -tclargs <build dir> \[PE_COUNT\]"
+    error "usage: vivado -mode batch -source create_project.tcl -tclargs <build dir> \[PE_COUNT\] \[design name\]"
 }
 set build_dir [file normalize [lindex $argv 0]]
-set pe_count [expr {[llength $argv] > 1 ? [lindex $argv 1] : 256}]
+set pe_count 256
+set design_name sr_accel
+foreach arg [lrange $argv 1 end] {
+    if {[string is integer -strict $arg]} {
+        set pe_count $arg
+    } else {
+        set design_name $arg
+    }
+}
 set rtl_dir [file normalize [file join [file dirname [info script]] .. rtl]]
 
 # The KV260's board files come from AMD's board store, once per machine.
@@ -21,11 +32,11 @@ if {[llength [get_board_parts -quiet xilinx.com:kv260_som:*]] == 0} {
 }
 set board_part [lindex [lsort [get_board_parts xilinx.com:kv260_som:*]] end]
 
-create_project sr_accel $build_dir -part xck26-sfvc784-2LV-c -force
+create_project $design_name $build_dir -part xck26-sfvc784-2LV-c -force
 set_property board_part $board_part [current_project]
 add_files [glob $rtl_dir/*.v]
 
-create_bd_design sr_accel
+create_bd_design $design_name
 
 # Zynq PS with the KV260 preset. HPM0_FPD carries the register writes, HP0_FPD the DMA's
 # traffic to DDR, pl_clk0 clocks the fabric at 100 MHz.
@@ -82,9 +93,9 @@ assign_bd_address
 validate_bd_design
 save_bd_design
 
-set wrapper [make_wrapper -files [get_files sr_accel.bd] -top]
+set wrapper [make_wrapper -files [get_files ${design_name}.bd] -top]
 add_files -norecurse $wrapper
-set_property top sr_accel_wrapper [current_fileset]
+set_property top ${design_name}_wrapper [current_fileset]
 update_compile_order -fileset sources_1
 
-puts "Created $build_dir/sr_accel.xpr (PE_COUNT $pe_count, board $board_part)"
+puts "Created $build_dir/${design_name}.xpr (PE_COUNT $pe_count, board $board_part)"

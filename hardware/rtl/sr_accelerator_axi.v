@@ -225,7 +225,6 @@ module sr_accelerator_axi #(
             row_addr <= 0;
             load_count <= 0;
             word_cnt <= 0;
-            row_buf <= 0;
             writing <= 0;
             byte_k <= 0;
             out_buf <= 0;
