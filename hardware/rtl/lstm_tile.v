@@ -10,9 +10,19 @@
 //
 //  Weight, bias, and context reads are synchronous. The address on
 //  cycle N is valid at the data output on cycle N+1. The gate-buffer
-//  read and the EPU are combinational, so neuron_addr and a ready
-//  context word produce c_t and h_t in that same cycle. context_we
-//  then stores {c_t, h_t}.
+//  read is combinational. The EPU arithmetic is combinational too
+//  (lstm_iterm, lstm_cell, lstm_h), and this tile registers it in
+//  three stages, and the i-term multiply is one stage after the gates:
+//    1. c_prev and the gate values (mux and sigmoid, not the multiply)
+//    2. i_term from those gates, and c_prev delayed to match it
+//    3. c_t, and the o gate delayed to match it
+//    4. {c_t, h_t}, which is what c_t and h_t ports present
+//  context_we stores that pair on the cycle it is already valid.
+//
+//  h used as a multiply input is registered twice after the context
+//  read. h_near sits on the RAM output. h_mac fans out to the PE array
+//  and to the output layer. The controller presents that context address
+//  two cycles before the matching weight address.
 //
 //  Per layer the controller is expected to:
 //    1. Present the i/f bias address, then pulse load_bias.
@@ -21,9 +31,9 @@
 //    4. Pulse capture_gates with gate_pair = 0. That copies both
 //       accumulator buses into memories i and f.
 //    5. Repeat 1-4 for gates o and c with gate_pair = 1.
-//    6. For neuron_addr = 0 .. PE_COUNT-1, present that neuron's
-//       context address one cycle early, then pulse context_we to
-//       store the EPU result.
+//    6. For neuron_addr = 0 .. PE_COUNT-1: present the source context
+//       address, hold neuron_addr while that word is valid, then pulse
+//       context_we once the registered {c_t, h_t} is valid.
 //
 //  d_in is shifted left by x_shift before it reaches the PEs, which is
 //  the same as shifting every product (shared/specs/weight_image.md:
@@ -97,7 +107,8 @@ module lstm_tile #(
     output wire signed [8:0] pe_i,
     output wire signed [8:0] pe_f,
     output wire signed [8:0] pe_o,
-    output wire signed [8:0] pe_c
+    output wire signed [8:0] pe_c,
+    output wire signed [H_WIDTH-1:0] h_mac
 );
 
     localparam STATE_WIDTH = C_WIDTH + H_WIDTH;
@@ -114,6 +125,30 @@ module lstm_tile #(
     wire signed [PE_X_WIDTH-1:0] pe_data;
     wire signed [C_WIDTH-1:0] c_prev;
     wire [STATE_WIDTH-1:0] context_din;
+    wire signed [GATE_WIDTH-1:0] term_i;
+    wire signed [GATE_WIDTH-1:0] term_f;
+    wire signed [GATE_WIDTH-1:0] term_o;
+    wire signed [7:0] tanh_c;
+    wire signed [12:0] i_term_c;
+    wire signed [16:0] i_times_g;
+    wire signed [C_WIDTH-1:0] c_t_c;
+    wire signed [H_WIDTH-1:0] h_c;
+
+    // h_near is the only load on the context-RAM cascade. KEEP keeps it
+    // from folding into h_mac, which has to drive every multiplier.
+    (* KEEP = "true" *) reg signed [H_WIDTH-1:0] h_near;
+    reg signed [H_WIDTH-1:0] h_fan;
+    (* KEEP = "true" *) reg signed [C_WIDTH-1:0] c_prev_r;
+    reg signed [C_WIDTH-1:0] c_prev_d;
+    (* KEEP = "true" *) reg signed [GATE_WIDTH-1:0] gate_i_r;
+    (* KEEP = "true" *) reg signed [GATE_WIDTH-1:0] gate_f_r;
+    (* KEEP = "true" *) reg signed [GATE_WIDTH-1:0] gate_o_r;
+    (* KEEP = "true" *) reg signed [7:0] tanh_c_r;
+    reg signed [12:0] i_term_r;
+    reg signed [C_WIDTH-1:0] c_t_r;
+    reg signed [GATE_WIDTH-1:0] gate_o_d;
+    reg signed [C_WIDTH-1:0] c_t_q;
+    reg signed [H_WIDTH-1:0] h_t_q;
 
     (* ram_style = "distributed" *)
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias0_mem [0:BIAS_DEPTH-1];
@@ -123,10 +158,15 @@ module lstm_tile #(
     reg signed [PE_COUNT*BIAS_WIDTH-1:0] bias1_q;
 
     assign h_from_context = context_dout[H_WIDTH-1:0];
+    assign h_mac = h_fan;
     assign c_prev = context_dout[STATE_WIDTH-1:H_WIDTH];
     // d_in is sign-extended to PE_X_WIDTH before the shift.
     assign x_shifted = d_in <<< x_shift;
-    assign pe_data = sel_in ? h_from_context : x_shifted;
+    assign pe_data = sel_in ? h_fan : x_shifted;
+    assign i_times_g = gate_i_r * tanh_c_r;
+    assign i_term_c = (i_times_g + 17'sd8) >>> 4;
+    assign c_t = c_t_q;
+    assign h_t = h_t_q;
     assign context_din = context_use_ext ? context_ext_din : {c_t, h_t};
 
     weight_bram #(
@@ -162,6 +202,16 @@ module lstm_tile #(
         end
         bias0_q <= bias0_mem[bias_addr];
         bias1_q <= bias1_mem[bias_addr];
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            h_near <= 0;
+            h_fan <= 0;
+        end else begin
+            h_near <= h_from_context;
+            h_fan <= h_near;
+        end
     end
 
     pe_array #(
@@ -233,15 +283,77 @@ module lstm_tile #(
         .pe_c(pe_c)
     );
 
-    lstm_epu epu (
-        .clk(clk),
-        .rst(rst),
-        .enable(1'b1),
-        .old_hidden_state(c_prev),
-        .pe_input({pe_c, pe_o, pe_f, pe_i}),
-        .hidden_state_output(c_t),
-        .output_state(h_t)
+    // Gates are registered off the mux. The i-term multiply uses those
+    // registers on the next cycle, with c_prev delayed to stay aligned.
+    lstm_iterm terms (
+        .pe_i(pe_i),
+        .pe_f(pe_f),
+        .pe_o(pe_o),
+        .pe_c(pe_c),
+        .gate_i(term_i),
+        .gate_f(term_f),
+        .gate_o(term_o),
+        .tanh_c(tanh_c)
     );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            c_prev_r <= 0;
+            gate_i_r <= 0;
+            gate_f_r <= 0;
+            gate_o_r <= 0;
+            tanh_c_r <= 0;
+        end else begin
+            c_prev_r <= c_prev;
+            gate_i_r <= term_i;
+            gate_f_r <= term_f;
+            gate_o_r <= term_o;
+            tanh_c_r <= tanh_c;
+        end
+    end
+
+    always @(posedge clk) begin
+        if (rst) begin
+            i_term_r <= 0;
+            c_prev_d <= 0;
+        end else begin
+            i_term_r <= i_term_c;
+            c_prev_d <= c_prev_r;
+        end
+    end
+
+    lstm_cell u_cell (
+        .c_prev(c_prev_d),
+        .gate_f(gate_f_r),
+        .i_term(i_term_r),
+        .c_t(c_t_c)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            c_t_r <= 0;
+            gate_o_d <= 0;
+        end else begin
+            c_t_r <= c_t_c;
+            gate_o_d <= gate_o_r;
+        end
+    end
+
+    lstm_h hidden (
+        .c_t(c_t_r),
+        .gate_o(gate_o_d),
+        .h_t(h_c)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            c_t_q <= 0;
+            h_t_q <= 0;
+        end else begin
+            c_t_q <= c_t_r;
+            h_t_q <= h_c;
+        end
+    end
 
     context_memory #(
         .STATE_WIDTH(STATE_WIDTH),

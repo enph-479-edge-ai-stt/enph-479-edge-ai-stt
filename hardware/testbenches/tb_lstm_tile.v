@@ -224,11 +224,20 @@ module tb_lstm_tile;
                 pe_enable = (k > 0);
                 @(negedge clk);
             end
+            // h_mac is two registers behind the context read, so the
+            // address goes out two cycles before the matching weight.
+            pe_enable = 0;
+            sel_in = 1;
+            context_addr = CTX;
+            @(negedge clk);
+            if (PE > 1)
+                context_addr = CTX + 1;
+            @(negedge clk);
             for (k = 0; k <= PE; k = k + 1) begin
-                if (k < PE) begin
+                if (k < PE)
                     weight_addr = base + D + k;
-                    context_addr = CTX + k;
-                end
+                if (k + 2 < PE)
+                    context_addr = CTX + k + 2;
                 sel_in = 1;
                 pe_enable = (k > 0);
                 @(negedge clk);
@@ -267,7 +276,10 @@ module tb_lstm_tile;
         end
     endtask
 
-    // EPU sweep: present addresses, check c_t/h_t next cycle, write back.
+    // EPU sweep. The result is valid five cycles after the address is
+    // presented: the context word, the gates, the i-term, c_t, then h.
+    // context_we is raised on that cycle and the write commits on the
+    // next edge, before the following neuron changes the address.
     task epu_sweep;
         begin
             bad = 0;
@@ -276,7 +288,7 @@ module tb_lstm_tile;
                 context_we = 0;
                 context_addr = CTX + n;
                 neuron_addr = n;
-                @(negedge clk);
+                repeat (5) @(negedge clk);
                 r_c = ctxm[CTX + n][23:8];
                 r_gates = {gc[n], go[n], gf[n], gi[n]};
                 #1;
