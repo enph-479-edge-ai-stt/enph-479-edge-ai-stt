@@ -8,12 +8,12 @@
 //  preempt each other. Switching networks is a different weight base
 //  and context base; the datapath is not reconfigured.
 //
-//  Weight, bias, context, and projection reads are one cycle late.
-//  pe_enable and the output-tile enable are asserted on the cycle that
-//  data is valid, one step after the address is issued. The EPU is two
-//  cycles per neuron: present the source address, then write {c_t, h_t}
-//  on the next cycle at the destination address. The read data the EPU
-//  uses is the registered output of the source address.
+//  Weight and bias reads are one cycle late. h is registered twice after
+//  the context read, so a context address is presented two cycles before
+//  the weight it multiplies, and pe_enable lines up with the second
+//  register. The EPU takes six cycles per neuron: present the source,
+//  register the word and the gates, form the i-term, form c_t, form h,
+//  then write the registered pair.
 //
 //  Layer 0 input is the frame (AM) or a one-hot character (LM).
 //  Later layers read the previous layer's new h from the destination
@@ -124,7 +124,8 @@ module fsm_controller #(
     localparam S_MAC_H     = 4'd4;
     localparam S_CAPTURE   = 4'd5;
     localparam S_EPU_RD    = 4'd6;
-    localparam S_EPU_WR    = 4'd7;
+    // Six cycles per neuron: read, gates, i-term, cell, hidden, write.
+    localparam EPU_WRITE   = 3'd5;
     localparam S_OUT_ADDR  = 4'd8;
     localparam S_OUT_LOAD  = 4'd9;
     localparam S_OUT_MAC   = 4'd10;
@@ -154,6 +155,7 @@ module fsm_controller #(
     reg [CONTEXT_AW-1:0] clear_base;
     reg [CONTEXT_AW-1:0] clear_count;
     reg signed [X_WIDTH-1:0] d_pipe;
+    reg [2:0] epu_ph;
 
     assign state_out = state;
     assign lm = is_lm;
@@ -176,6 +178,12 @@ module fsm_controller #(
         : (layer * PE_COUNT);
     wire [STEP_W-1:0] issue_off = (mac_step < mac_len_r) ? mac_step : (mac_len_r - 1'b1);
     wire mac_fire = (mac_step != 0) && (mac_step <= mac_len_r);
+    // h_mac is valid three cycles after the context address is presented
+    // and the weight is valid one cycle after its address, so the context
+    // index runs two steps ahead of the weight index. 0 and 1 are prefetched.
+    wire [STEP_W-1:0] ctx_ahead = mac_step + 2'd2;
+    wire [STEP_W-1:0] ctx_idx = (mac_len_r != 0 && ctx_ahead < mac_len_r)
+        ? ctx_ahead : (mac_len_r - 1'b1);
     wire signed [X_WIDTH-1:0] layer0_elem = is_lm
         ? ((mac_step == char_q) ? 8'sd1 : 8'sd0)
         : frame_elem;
@@ -208,33 +216,47 @@ module fsm_controller #(
             S_BIAS_ADDR, S_BIAS_LOAD: begin
                 bias_addr = global_layer * 2 + pair;
                 load_bias = (state == S_BIAS_LOAD);
+                // Layer 1+ x-phase multiplies h. These two cycles are the
+                // prefetch of elements 0 and 1.
+                if (layer != 0)
+                    context_addr = (dst_ctx - PE_COUNT)
+                        + ((state == S_BIAS_LOAD && PE_COUNT > 1) ? 1 : 0);
             end
             S_MAC_X, S_MAC_H: begin
                 pe_enable = mac_fire;
                 sel_in = (state == S_MAC_H) || (layer != 0);
                 weight_addr = mac_base_r + issue_off;
-                // Layer 1+ x-phase reads the h layer 0 just wrote (dst).
-                // h-phase reads this layer's previous h (src).
-                if (sel_in)
-                    context_addr = ((state == S_MAC_X) ? (dst_ctx - PE_COUNT) : src_ctx) + issue_off;
+                // The last two cycles of the x-phase prefetch h-phase
+                // elements 0 and 1. Otherwise a context-using MAC issues
+                // its address two steps ahead of the weight.
+                if (state == S_MAC_X && mac_step >= mac_len_r)
+                    context_addr = src_ctx
+                        + ((mac_step == mac_len_r || PE_COUNT <= 1) ? 0 : 1);
+                else if (sel_in)
+                    context_addr = ((state == S_MAC_X) ? (dst_ctx - PE_COUNT) : src_ctx)
+                        + ctx_idx;
             end
             S_CAPTURE: begin
                 capture_gates = 1;
             end
-            S_EPU_RD, S_EPU_WR: begin
-                // RD presents src; the registered read is what the EPU
-                // sees during WR, which writes dst.
-                context_addr = (state == S_EPU_WR) ? (dst_ctx + n) : (src_ctx + n);
+            S_EPU_RD: begin
+                // Cycles 0 and 1 hold the source address. The word read
+                // during cycle 0 is valid through cycle 1, which is when
+                // the tile's first pipeline register samples it. The
+                // write address is presented once that sample is done.
+                context_addr = (epu_ph <= 3'd1) ? (src_ctx + n) : (dst_ctx + n);
                 neuron_addr = n[NEURON_AW-1:0];
-                context_we = (state == S_EPU_WR);
+                context_we = (epu_ph == EPU_WRITE);
             end
             S_OUT_ADDR, S_OUT_LOAD: begin
                 out_load_bias = (state == S_OUT_LOAD);
+                context_addr = dst_ctx
+                    + ((state == S_OUT_LOAD && PE_COUNT > 1) ? 1 : 0);
             end
             S_OUT_MAC: begin
                 out_enable = mac_fire;
                 out_weight_addr = mac_base_r + issue_off;
-                context_addr = dst_ctx + issue_off;
+                context_addr = dst_ctx + ctx_idx;
             end
             S_OUT_EMIT: begin
                 score_valid = 1;
@@ -266,6 +288,7 @@ module fsm_controller #(
             clear_base <= 0;
             clear_count <= 0;
             d_pipe <= 0;
+            epu_ph <= 0;
             score_idx <= 0;
             error <= 0;
         end else begin
@@ -337,25 +360,27 @@ module fsm_controller #(
                     end else begin
                         pair <= 1'b0;
                         n <= 0;
+                        epu_ph <= 0;
                         state <= S_EPU_RD;
                     end
                 end
                 S_EPU_RD: begin
-                    state <= S_EPU_WR;
-                end
-                S_EPU_WR: begin
-                    if (n == PE_COUNT - 1) begin
-                        if (layer + 1'b1 == n_layers) begin
-                            state <= S_OUT_ADDR;
+                    if (epu_ph == EPU_WRITE) begin
+                        epu_ph <= 0;
+                        if (n == PE_COUNT - 1) begin
+                            if (layer + 1'b1 == n_layers) begin
+                                state <= S_OUT_ADDR;
+                            end else begin
+                                layer_wbase <= layer_wbase + {pair_span, 1'b0};
+                                layer <= layer + 1'b1;
+                                pair <= 1'b0;
+                                state <= S_BIAS_ADDR;
+                            end
                         end else begin
-                            layer_wbase <= layer_wbase + {pair_span, 1'b0};
-                            layer <= layer + 1'b1;
-                            pair <= 1'b0;
-                            state <= S_BIAS_ADDR;
+                            n <= n + 1'b1;
                         end
                     end else begin
-                        n <= n + 1'b1;
-                        state <= S_EPU_RD;
+                        epu_ph <= epu_ph + 1'b1;
                     end
                 end
                 S_OUT_ADDR: begin
