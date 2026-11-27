@@ -200,7 +200,7 @@ module sr_accelerator_top #(
     wire out_bias_addr = idle ? host_out_bias_addr : ctrl_out_bias_addr;
     wire out_bias_we = idle & host_out_bias_we;
 
-    wire signed [H_WIDTH-1:0] h_to_proj = context_dout[H_WIDTH-1:0];
+    wire signed [H_WIDTH-1:0] h_to_proj;
     wire signed [VOCAB*SCORE_WIDTH-1:0] score_bus;
     assign scores = score_bus;
     assign score = score_bus[score_idx*SCORE_WIDTH +: SCORE_WIDTH];
@@ -245,7 +245,8 @@ module sr_accelerator_top #(
         .context_we(idle ? 1'b0 : ctrl_context_we),
         .context_use_ext(idle ? 1'b0 : ctrl_use_ext),
         .context_ext_din({(C_WIDTH+H_WIDTH){1'b0}}),
-        .context_dout(context_dout)
+        .context_dout(context_dout),
+        .h_mac(h_to_proj)
     );
 
     output_tile #(

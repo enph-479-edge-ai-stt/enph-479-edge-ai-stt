@@ -52,15 +52,10 @@ module pe_buffer #(
 
     integer n;
 
+    // No reset of the lane memories. A clear of every lane is a high-fanout
+    // reset, and capture overwrites a pair before any lane is read.
     always @(posedge clk) begin
-        if (rst) begin
-            for (n = 0; n < PE_COUNT; n = n + 1) begin
-                mem_i[n] <= {GATE_WIDTH{1'b0}};
-                mem_f[n] <= {GATE_WIDTH{1'b0}};
-                mem_o[n] <= {GATE_WIDTH{1'b0}};
-                mem_c[n] <= {GATE_WIDTH{1'b0}};
-            end
-        end else if (capture) begin
+        if (capture) begin
             for (n = 0; n < PE_COUNT; n = n + 1) begin
                 if (!gate_pair) begin
                     mem_i[n] <= pe_in0[n*GATE_WIDTH +: GATE_WIDTH];

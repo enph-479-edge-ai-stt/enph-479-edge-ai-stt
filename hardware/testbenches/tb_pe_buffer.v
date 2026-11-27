@@ -1,7 +1,8 @@
 `timescale 1ns / 1ps
 
-// Gate buffer: reset, capture of each gate pair across every lane, the
-// other pair left alone, no write without capture, and overwrite.
+// Gate buffer: capture of each gate pair across every lane, the other
+// pair left alone, no write without capture, and overwrite. The lane
+// memories are not cleared by reset.
 // Reads are combinational, so each check sweeps addr.
 
 module tb_pe_buffer;
@@ -89,7 +90,15 @@ module tb_pe_buffer;
         exp_i = 0; exp_f = 0; exp_o = 0; exp_c = 0;
         repeat (2) @(negedge clk);
         rst = 0;
-        check_all("reset clears all four memories");
+        pe_in0 = 0;
+        pe_in1 = 0;
+        gate_pair = 0;
+        capture = 1;
+        @(negedge clk);
+        gate_pair = 1;
+        @(negedge clk);
+        capture = 0;
+        check_all("capture of zeros fills all four memories");
 
         capture_pair(0);
         check_all("pair 0 fills i and f, o and c stay 0");
@@ -110,10 +119,9 @@ module tb_pe_buffer;
 
         @(negedge clk);
         rst = 1;
-        exp_i = 0; exp_f = 0; exp_o = 0; exp_c = 0;
         @(negedge clk);
         rst = 0;
-        check_all("reset after captures");
+        check_all("reset leaves captured gates");
 
         if (errors == 0)
             $display("ALL CHECKS PASSED");
