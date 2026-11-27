@@ -160,3 +160,39 @@ def test_a_run_trains_fine_tunes_and_saves(tiny, tmp_path, monkeypatch):
         assert torch.equal(saved["cmvn_mean"], extra)
         assert torch.equal(saved["model"]["proj.weight"], m.proj.weight)
     assert json.loads(Path("run/net_fabric.json").read_text())["cmvn_mean"] == extra.tolist()
+
+
+def test_a_run_resumes_from_its_checkpoint(tmp_path, monkeypatch):
+    """A run that dies after epoch 1 picks up at epoch 2 from its checkpoint, log intact."""
+    monkeypatch.chdir(tmp_path)
+    items = list_utterances(write_subset(tmp_path / "audio"))
+    mean, std = compute_cmvn_over(items)
+    data = {
+        "train": [LibriSpeechFeatures(items, mean, std, augment=True)],
+        "test": [LibriSpeechFeatures(items, mean, std)],
+    }
+    cfg = am.TrainConfig(
+        n_hidden=16, n_layers=2, epochs=4, batch_size=2, num_workers=0, device="cpu"
+    )
+    ckpt = tmp_path / "drive" / "am_ckpt.pt"
+
+    real = am.loss_and_cer
+    calls = []
+
+    def dies_in_epoch_2(*args):
+        calls.append(1)
+        if len(calls) == 3:
+            raise RuntimeError("VM lost")
+        return real(*args)
+
+    monkeypatch.setattr(am, "loss_and_cer", dies_in_epoch_2)
+    with pytest.raises(RuntimeError, match="VM lost"):
+        am.train(cfg, data, "train.log", checkpoint=ckpt)
+    assert torch.load(ckpt)["epoch"] == 2
+    Path("train.log").unlink()  # a new VM starts without the old one's files
+
+    am.train(cfg, data, "train.log", checkpoint=ckpt)
+    log = Path("train.log").read_text(encoding="utf-8")
+    assert [log.count(f"[epoch {e}]") for e in range(4)] == [1, 1, 1, 1]
+    assert "resumed from" in log and log.index("[epoch 1]") < log.index("resumed from")
+    assert torch.load(ckpt)["epoch"] == 4

@@ -20,6 +20,8 @@ from training.am.dataset import (  # noqa: E402
     LibriSpeechFeatures,
     collate,
     list_utterances,
+    spec_augment,
+    speed_perturb,
 )
 from training.am.model import AcousticModel  # noqa: E402
 from training.features import fbank  # noqa: E402
@@ -45,6 +47,40 @@ def test_dataset_reads_flac_and_encodes_labels(tmp_path):
     feats, labels = LibriSpeechFeatures(items)[0]
     assert feats.size(1) == 123
     assert labels.tolist() == vocab.encode("HELLO WORLD")
+
+
+@pytest.mark.parametrize("speed", [0.9, 1.0, 1.1])
+def test_speed_perturb_changes_the_length_by_the_speed(speed):
+    wav = torch.randn(1, fbank.SAMPLE_RATE)
+    out = speed_perturb(wav, speed)
+    assert abs(out.size(1) - fbank.SAMPLE_RATE / speed) <= 1
+    assert speed != 1.0 or out is wav
+
+
+def test_spec_augment_masks_whole_bins_and_frames_but_not_energy():
+    torch.manual_seed(0)
+    feats = torch.ones(200, fbank.FEATURE_DIM)
+    for _ in range(50):
+        out = spec_augment(feats)
+        assert torch.equal(feats, torch.ones_like(feats))  # a copy, not in place
+        cols = (out == 0).all(0)  # zeroed in every frame: a frequency mask
+        rows = (out == 0).all(1)  # zeroed in every column: a time mask
+        assert not cols[[40, 81, 122]].any()  # the energy columns
+        mel = cols[:40]
+        assert torch.equal(cols[41:81], mel) and torch.equal(cols[82:122], mel)
+        assert mel.sum() <= 14 and rows.sum() <= 2 * 40
+        assert torch.equal(out == 0, cols.expand_as(out) | rows[:, None])  # nothing else
+
+
+def test_dataset_augments_only_when_asked(tmp_path):
+    items = list_utterances(write_subset(tmp_path))
+    plain = LibriSpeechFeatures(items)
+    assert torch.equal(plain[0][0], plain[0][0])
+    torch.manual_seed(0)
+    aug = LibriSpeechFeatures(items, augment=True)
+    reads = [aug[0][0] for _ in range(6)]
+    assert any(r.shape != plain[0][0].shape or not torch.equal(r, plain[0][0]) for r in reads)
+    assert all(r.size(1) == 123 for r in reads)
 
 
 def test_collate_pads_and_packs_lengths():

@@ -28,6 +28,8 @@ class TrainConfig(lstm.TrainConfig):
     """Hyperparameters for one training run."""
 
     dropout: float = 0.2
+    # Speed perturbation and SpecAugment on the training set (am/dataset.py).
+    augment: bool = False
     # Features are extracted on the fly in the DataLoader workers, and that, not the GPU,
     # sets the pace, so use every core the runtime has (8 on Colab's High-RAM T4, 2 without).
     num_workers: int = os.cpu_count()
@@ -53,7 +55,7 @@ def load_data(
     # Every 10th training utterance is plenty for a global mean/std.
     mean, std = compute_cmvn_over(train_items[::10], num_workers=cfg.num_workers)
     datasets = {
-        "train": [LibriSpeechFeatures(train_items, mean, std)],
+        "train": [LibriSpeechFeatures(train_items, mean, std, augment=cfg.augment)],
         "test": [LibriSpeechFeatures(dev_items, mean, std)],
     }
     return datasets, {"cmvn_mean": mean, "cmvn_std": std}
@@ -87,6 +89,7 @@ def train(
     datasets: dict[str, list[Dataset]],
     log_path: str | Path,
     init_state: dict[str, torch.Tensor] | None = None,
+    checkpoint: str | Path | None = None,
 ) -> AcousticModel:
     """Train on all of ``datasets["train"]``; after each epoch, log loss and CER on ``"test"``.
 
@@ -94,7 +97,8 @@ def train(
     yield CMVN-normalized (features ``[T, 123]``, label indices ``[L]``) pairs. Progress and
     epoch lines are printed and written to ``log_path`` (overwritten). Returns the model.
 
-    ``init_state`` and ``cfg.quantize`` are the 6-bit fine-tune, see ``lstm.fit``.
+    ``init_state`` and ``cfg.quantize`` are the 6-bit fine-tune, and ``checkpoint`` saves
+    after every epoch and resumes from it, see ``lstm.fit``.
     """
     device = torch.device(cfg.device)
     loader_kw = {
@@ -128,5 +132,6 @@ def train(
         evaluate,
         log_path,
         init_state,
+        checkpoint,
     )
     return model

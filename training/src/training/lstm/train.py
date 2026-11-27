@@ -1,9 +1,9 @@
 """The training loop the acoustic and character models share.
 
-Runs start to finish in one session: logs progress and, after every epoch, the model's
-own evaluation (to the notebook output and a log file). The learning rate falls from
-``cfg.lr`` to 0 on one cosine over the run. With ``quantize`` set it
-fine-tunes a trained model with its weights quantized, the paper's "retraining based
+Logs progress and, after every epoch, the model's own evaluation (to the notebook output
+and a log file), and optionally saves a checkpoint a later session resumes from. The
+learning rate falls from ``cfg.lr`` to 0 on one cosine over the run. With ``quantize``
+set it fine-tunes a trained model with its weights quantized, the paper's "retraining based
 fixed-point optimization" (weights only; activations and the cell stay float). The
 weights land on the FPGA's fixed-point grid, so ``lstm/export.py`` can pack the result.
 """
@@ -77,6 +77,7 @@ def fit(
     evaluate: Callable[[], str],
     log_path: str | Path,
     init_state: dict[str, torch.Tensor] | None = None,
+    checkpoint: str | Path | None = None,
 ) -> None:
     """Train ``model`` in place on ``cfg.device``, logging to ``log_path`` (overwritten).
 
@@ -89,10 +90,17 @@ def fit(
     ``cfg.quantize`` set (which needs a trained ``init_state``), every forward and
     backward pass runs on quantized weights, so what ``evaluate`` sees and what the model
     is left with are the quantized model's.
+
+    With ``checkpoint`` set (a path on Drive), the model, optimizer, schedule and log so far
+    are saved there after every epoch. A call that finds the file there picks up after its
+    last epoch instead of starting over, so a lost VM costs at most one epoch. Drive syncs
+    in the background, so the newest one may not have reached it when a VM dies.
     """
     log_path = Path(log_path)
-    log_path.write_text("", encoding="utf-8")
-    _log(log_path, str(cfg))
+    ckpt = Path(checkpoint) if checkpoint is not None else None
+    if ckpt is None or not ckpt.exists():
+        log_path.write_text("", encoding="utf-8")
+        _log(log_path, str(cfg))
     if init_state is not None:
         model.load_state_dict(init_state)
     model.to(cfg.device)
@@ -107,7 +115,17 @@ def fit(
     steps = _weight_steps(model) if cfg.quantize else {}
     floats = _quantize(model, steps)
 
-    for epoch in range(cfg.epochs):
+    start = 0
+    if ckpt is not None and ckpt.exists():
+        state = torch.load(ckpt, map_location=cfg.device)
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state["opt"])
+        sched.load_state_dict(state["sched"])
+        floats, start = state["floats"], state["epoch"]
+        log_path.write_text(state["log"], encoding="utf-8")
+        _log(log_path, f"resumed from {ckpt} after epoch {start - 1}")
+
+    for epoch in range(start, cfg.epochs):
         model.train()
         t0 = time.perf_counter()
         loss_sum = 0.0
@@ -139,3 +157,16 @@ def fit(
             f"[epoch {epoch}] {show_loss(loss_sum / n_batches)} | train {train_s:.0f}s, "
             f"eval {time.perf_counter() - t0 - train_s:.0f}s | {result}",
         )
+        if ckpt is not None:
+            state = {
+                "epoch": epoch + 1,
+                "model": model.state_dict(),
+                "opt": opt.state_dict(),
+                "sched": sched.state_dict(),
+                "floats": floats,
+                "log": log_path.read_text(encoding="utf-8"),
+            }
+            ckpt.parent.mkdir(parents=True, exist_ok=True)
+            tmp = ckpt.with_suffix(".tmp")
+            torch.save(state, tmp)
+            tmp.replace(ckpt)  # a VM lost mid-save leaves the previous checkpoint whole
