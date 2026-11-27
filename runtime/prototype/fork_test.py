@@ -74,10 +74,8 @@ def run(bitfile: str, images: Path, npz: Path) -> None:
     fabric = Fabric(bitfile)
     fabric.load_images(images / "am_fabric.mem", images / "cm_fabric.mem")
     fabric.clear_slot(0)
-    got = np.empty_like(want)
     t = time.perf_counter()
-    for k, (src, dst, ch) in enumerate(jobs):
-        got[k] = fabric.lm_step(int(src), int(dst), int(ch))
+    got = fabric.lm(jobs[:, 0], jobs[:, 1], jobs[:, 2])  # all of them in one C++ call
     dt = time.perf_counter() - t
 
     exact = (got == want).all(-1)

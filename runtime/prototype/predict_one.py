@@ -87,7 +87,7 @@ def run(bitfile: str, images: Path, npz: Path) -> None:
     print(f"integer greedy: {vocab.collapse(want_am.argmax(-1))!r}")
 
     fabric.clear_slot(0)
-    cm = fabric.lm_step(0, 0, vocab.EOS_IDX)
+    cm = fabric.lm([0], [0], [vocab.EOS_IDX])[0]
     print(f"CM step (EOS, zero state): {'exact' if (cm == want_cm).all() else 'MISMATCH'}"
           f"\n    fabric {cm.tolist()}\n    model  {want_cm.tolist()}")
     print(f"STATUS 0x{fabric.regs.read(STATUS):08x}")
